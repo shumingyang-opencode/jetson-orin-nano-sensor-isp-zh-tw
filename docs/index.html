@@ -25,17 +25,17 @@
   </a>
   <a class="card lv-emerald" href="unit-02.html">
     <div class="c-name">單元 2 · 影像感測器基礎</div>
-    <div class="c-zh">pixel array、Bayer、global shutter（OV9281）。</div>
+    <div class="c-zh">感測器原理 + OV9281/OV5640 規格。</div>
     <div class="c-tags"><span class="c-tag">基礎</span><span class="c-tag">L0</span></div>
   </a>
   <a class="card lv-emerald" href="unit-03.html">
     <div class="c-name">單元 3 · 感測器通訊介面</div>
-    <div class="c-zh">I2C/SCCB、register 讀寫、OV9281 ID。</div>
+    <div class="c-zh">I2C 實作、GMSL 通道、OV9281 ID。</div>
     <div class="c-tags"><span class="c-tag">通訊</span><span class="c-tag">L0</span></div>
   </a>
   <a class="card lv-cyan" href="unit-04.html">
     <div class="c-name">單元 4 · 平台相機框架與驅動</div>
-    <div class="c-zh">tegracam 感測器驅動、DTB overlay、Argus 註冊。</div>
+    <div class="c-zh">tegracam 驅動、DTB 感測器節點、Argus 註冊。</div>
     <div class="c-tags"><span class="c-tag">驅動</span><span class="c-tag">L1</span></div>
   </a>
   <a class="card lv-cyan" href="unit-05.html">
@@ -45,12 +45,12 @@
   </a>
   <a class="card lv-cyan" href="unit-06.html">
     <div class="c-name">單元 6 · Sensor Bring-up 與除錯</div>
-    <div class="c-zh">上電、clock、GMSL serdes、dmesg 除錯。</div>
+    <div class="c-zh">上電、clock、GMSL serdes、dmesg、決策樹。</div>
     <div class="c-tags"><span class="c-tag">除錯</span><span class="c-tag">L1</span></div>
   </a>
   <a class="card lv-amber" href="unit-07.html">
     <div class="c-name">單元 7 · ISP 管線深入</div>
-    <div class="c-zh">NVIDIA ISP（libnvivp）、ISP 區塊、tuning 介面。</div>
+    <div class="c-zh">NVIDIA ISP（libnvivp）、區塊、統計回饋。</div>
     <div class="c-tags"><span class="c-tag">ISP</span><span class="c-tag">L2</span></div>
   </a>
   <a class="card lv-amber" href="unit-08.html">
@@ -60,12 +60,12 @@
   </a>
   <a class="card lv-amber" href="unit-09.html">
     <div class="c-name">單元 9 · 各平台 ISP 架構差異</div>
-    <div class="c-zh">NVIDIA ISP 與 RPi5/Orange Pi 的差異。</div>
+    <div class="c-zh">NVIDIA ISP 與 RPi5/Orange Pi 差異。</div>
     <div class="c-tags"><span class="c-tag">架構</span><span class="c-tag">L2</span></div>
   </a>
   <a class="card lv-fuchsia" href="unit-10.html">
     <div class="c-name">單元 10 · 曝光與自動曝光（AE）</div>
-    <div class="c-zh">曝光三要素、Argus 曝光控制、NVIDIA AE。</div>
+    <div class="c-zh">曝光三要素、Argus 控制、NVIDIA AE 收斂。</div>
     <div class="c-tags"><span class="c-tag">調校</span><span class="c-tag">L3</span></div>
   </a>
   <a class="card lv-fuchsia" href="unit-11.html">
@@ -75,7 +75,7 @@
   </a>
   <a class="card lv-fuchsia" href="unit-12.html">
     <div class="c-name">單元 12 · 鏡頭陰影校正（LSC）</div>
-    <div class="c-zh">lens shading 成因、NVIDIA LSC、校正。</div>
+    <div class="c-zh">lens shading 成因、NVIDIA LSC。</div>
     <div class="c-tags"><span class="c-tag">調校</span><span class="c-tag">L3</span></div>
   </a>
   <a class="card lv-fuchsia" href="unit-13.html">
@@ -85,7 +85,7 @@
   </a>
   <a class="card lv-fuchsia" href="unit-14.html">
     <div class="c-name">單元 14 · 清晰度、動態範圍與調校工作流</div>
-    <div class="c-zh">sharpness/HDR、NVIDIA tuning 流程與紀律。</div>
+    <div class="c-zh">sharpness/HDR、NVIDIA 調校工作流。</div>
     <div class="c-tags"><span class="c-tag">調校</span><span class="c-tag">L3</span></div>
   </a>
   <a class="card lv-violet" href="unit-15.html">
@@ -101,5 +101,5 @@
 </div>
 <div class="callout info"><strong>建議路線：</strong>第一次學建議照 <a href="../learning-path.html">學習路線</a> 依序進行；只想看影像調校的讀者可先跳單元 10–14。</div>
 <footer>這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>
-  <span class="footer-license">本站教學內容（繁體中文解說）為本站原創，採 CC-BY-4.0；技術名詞與 register 範例引用自 <a href="https://docs.nvidia.com/jetson/" rel="noopener">NVIDIA Jetson 文件</a>、<a href="https://developer.nvidia.com/embedded/learn" rel="noopener">NVIDIA Developer</a> 與公開感測器資料。</span></footer>
+  <span class="footer-license">本站教學內容（繁體中文解說）為本站原創，採 CC-BY-4.0；register 與指令引用自 <a href="https://docs.nvidia.com/jetson/" rel="noopener">NVIDIA Jetson 文件</a>、<a href="https://developer.nvidia.com/embedded/learn" rel="noopener">NVIDIA Developer</a> 與公開感測器資料。</span></footer>
 </div></body></html>

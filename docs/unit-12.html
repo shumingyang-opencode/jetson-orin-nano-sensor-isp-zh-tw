@@ -26,19 +26,19 @@
 
 <div class="guide">
 <h2>Lens shading 成因</h2>
-<p>鏡頭邊緣光量低於中心（cos⁴ 效應），造成四周暗角、角落偏色。</p>
+<p>鏡頭邊緣光量低於中心（cos⁴），造成四周暗角、角落偏色。</p>
 
 <h2>NVIDIA 的 LSC</h2>
 <ul>
-<li>NVIDIA ISP 內建 <strong>LSC</strong>，用網格增益補償亮度與偏色。</li>
+<li>NVIDIA ISP 內建 <strong>LSC</strong> 網格增益補償。</li>
 <li>校正資料由 NVIDIA 工具產生（拍灰卡/積分球）。</li>
 </ul>
-<div class="callout warn"><strong>關鍵：</strong>LSC 是「鏡頭 + 感測器」組合特有——換鏡頭或換感測器板就要<strong>重新校正</strong>。多顆感測器要每顆獨立 LSC。</div>
+<div class="callout warn"><strong>關鍵：</strong>LSC 是「鏡頭 + 感測器」組合特有——換鏡頭或感測器板就要重新校正；多感測器每顆獨立 LSC。</div>
 
 
   <div class="outcome">
     <strong>看完這單元你應該能說出：</strong>
-    <ul><li>lens shading 成因。</li><li>NVIDIA LSC 網格機制。</li><li>LSC 需隨鏡頭/感測器重新校正。</li><li>多感測器要每顆獨立 LSC。</li></ul>
+    <ul><li>lens shading 成因。</li><li>NVIDIA LSC 網格。</li><li>LSC 需隨組合重新校正。</li><li>多感測器獨立 LSC。</li></ul>
   </div>
 
   <h2>延伸閱讀</h2>
@@ -55,7 +55,7 @@
 </div>
 
 <footer>這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>
-  <span class="footer-license">本站教學內容（繁體中文解說）為本站原創，採 CC-BY-4.0；技術名詞與 register 範例引用自 <a href="https://docs.nvidia.com/jetson/" rel="noopener">NVIDIA Jetson 文件</a>、<a href="https://developer.nvidia.com/embedded/learn" rel="noopener">NVIDIA Developer</a> 與公開感測器資料。</span></footer>
+  <span class="footer-license">本站教學內容（繁體中文解說）為本站原創，採 CC-BY-4.0；register 與指令引用自 <a href="https://docs.nvidia.com/jetson/" rel="noopener">NVIDIA Jetson 文件</a>、<a href="https://developer.nvidia.com/embedded/learn" rel="noopener">NVIDIA Developer</a> 與公開感測器資料。</span></footer>
 
 </div>
 </body>

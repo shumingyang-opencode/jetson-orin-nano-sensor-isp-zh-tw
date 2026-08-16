@@ -26,15 +26,14 @@
 
 <div class="guide">
 <h2>GMSL 多相機</h2>
-<p>Orin 可透過 GMSL deserializer（如 MAX96712，多 link）接多顆遠距離感測器，每顆有自己的 I2C 通道與鎖定狀態。</p>
-<div class="pipe"><span class="step">Cam0 感測器</span><span class="arr">→</span><span class="step" rowspan=2>deserializer</span><span class="arr">→</span><span class="step">CSI</span><span class="arr">→</span><span class="step">Argus</span></div>
+<p>Orin 可透過 GMSL deserializer（MAX96712，多 link）接多顆遠距離感測器，每顆有獨立 I2C 通道與 lock 狀態。</p>
 <div class="callout warn"><strong>GMSL 除錯重點：</strong>① 每條 link 的 I2C 通道 ② serdes 是否 lock ③ DTB 每個 camera 節點。</div>
 
-<h2>完整案例：Orin 上調校一顆 OV9281</h2>
+<h2>完整案例：Orin 調校一顆 OV9281</h2>
 <ol>
 <li>DTB 宣告感測器 + serdes 節點。</li>
 <li>確認 probe 成功、Argus 列舉到相機。</li>
-<li>argus_camera 出圖 → 確認曝光/白平衡自動收斂。</li>
+<li>argus_camera 出圖 → 確認 AE/AWB 自動收斂。</li>
 <li>RAW 分析：黑位、缺陷像素、雜訊。</li>
 <li>NVIDIA 工具做 LSC / 色彩基準。</li>
 <li>不同場景回歸。</li>
@@ -42,7 +41,7 @@
 
 <h2>最佳實踐</h2>
 <ul>
-<li>固定測試場景與光源，量化比較。</li>
+<li>固定測試場景，量化比較。</li>
 <li>讓 NVIDIA AE/AWB 自動化收斂，只干預異常。</li>
 <li>多感測器逐顆驗證、逐顆獨立 LSC。</li>
 <li>記錄每次改動與前後圖。</li>
@@ -51,7 +50,7 @@
 
   <div class="outcome">
     <strong>看完這單元你應該能說出：</strong>
-    <ul><li>GMSL 多相機架構與除錯重點。</li><li>Orin 調校 OV9281 的完整案例。</li><li>「自動化收斂 + 只干預異常」的哲學。</li><li>調校最佳實踐。</li></ul>
+    <ul><li>GMSL 多相機與除錯重點。</li><li>Orin 調校 OV9281 完整案例。</li><li>「自動化收斂 + 只干預異常」。</li><li>最佳實踐。</li></ul>
   </div>
 
   <h2>延伸閱讀</h2>
@@ -68,7 +67,7 @@
 </div>
 
 <footer>這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>
-  <span class="footer-license">本站教學內容（繁體中文解說）為本站原創，採 CC-BY-4.0；技術名詞與 register 範例引用自 <a href="https://docs.nvidia.com/jetson/" rel="noopener">NVIDIA Jetson 文件</a>、<a href="https://developer.nvidia.com/embedded/learn" rel="noopener">NVIDIA Developer</a> 與公開感測器資料。</span></footer>
+  <span class="footer-license">本站教學內容（繁體中文解說）為本站原創，採 CC-BY-4.0；register 與指令引用自 <a href="https://docs.nvidia.com/jetson/" rel="noopener">NVIDIA Jetson 文件</a>、<a href="https://developer.nvidia.com/embedded/learn" rel="noopener">NVIDIA Developer</a> 與公開感測器資料。</span></footer>
 
 </div>
 </body>

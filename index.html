@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>jetson-orin-nano-sensor-isp-zh-tw · NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站</title>
-<meta name="description" content="<strong>Jetson Orin Nano</strong> 擁有 NVIDIA 完整的相機與 ISP 堆疊——<strong>Argus</strong>、<strong>V4L2</strong>、<strong>GMSL serdes</strong>，是工業級 <strong>sensor 影像調適</strong>的代表平台。本站在「高畫質、多感測器」的實務視角下，帶你掌握 NVIDIA 相機調校。">
+<meta name="description" content="<strong>Jetson Orin Nano</strong> 是工業級相機的代表平台——<strong>Argus</strong>、<strong>GMSL serdes</strong>、<strong>NVIDIA ISP</strong>。本課程以 <span class='ov'>OV9281</span>與 <span class='ov'>OV5640</span> 為主例，帶你完成感測器初始化 → streaming → 調校。">
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
 <link rel="stylesheet" href="assets/site.css">
 </head>
@@ -13,9 +13,9 @@
 
 <header>
   <h1>NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站</h1>
-  <p class="subtitle">從感測器基礎到影像品質調適，中英對照的 16 單元教學</p>
-  <p class="badge-line">16 單元 · Argus / GMSL / NVIDIA ISP / 影像調校 · 內容 CC-BY-4.0</p>
-  <p class="tagline"><strong>Jetson Orin Nano</strong> 擁有 NVIDIA 完整的相機與 ISP 堆疊——<strong>Argus</strong>、<strong>V4L2</strong>、<strong>GMSL serdes</strong>，是工業級 <strong>sensor 影像調適</strong>的代表平台。本站在「高畫質、多感測器」的實務視角下，帶你掌握 NVIDIA 相機調校。</p>
+  <p class="subtitle">手把手：初始化感測器（含 GMSL）→ Argus Streaming → NVIDIA 調校</p>
+  <p class="badge-line">16 單元 · 深度實作 · Argus / GMSL / NVIDIA ISP · 內容 CC-BY-4.0</p>
+  <p class="tagline"><strong>Jetson Orin Nano</strong> 是工業級相機的代表平台——<strong>Argus</strong>、<strong>GMSL serdes</strong>、<strong>NVIDIA ISP</strong>。本課程以 <span class='ov'>OV9281</span>與 <span class='ov'>OV5640</span> 為主例，帶你完成感測器初始化 → streaming → 調校。</p>
 </header>
 
 <nav class="topnav">
@@ -45,7 +45,7 @@
     <div class="ec-icon">📚</div>
     <div class="ec-title">單元教學</div>
     <div class="ec-en">Lessons</div>
-    <div class="ec-desc">16 個單元循序漸進，含 5 個影像品質調校專章與跨平台比較。</div>
+    <div class="ec-desc">16 個深度實作單元，含 5 個影像調校專章與跨平台比較。</div>
     <div class="ec-pill"><span class="c-tag">16 單元</span><span class="c-tag">中英對照</span></div>
   </a>
   <a class="entry-card" href="about.html">
@@ -59,13 +59,13 @@
 
 <div class="guide" style="margin-top:2.6rem;">
   <h2>為什麼學這套課程？</h2>
-  <p><strong>Jetson Orin Nano</strong> 與 RPi5 / Orange Pi 的最大不同：它的相機能力是「專業級」——支援 <strong>GMSL serdes</strong>（長距離多感測器）、NVIDIA 的 <strong>ISP（libnvivp）</strong>與 <strong>Argus</strong> 相機框架。影像調校的參數與自動化程度都高一個檔次。</p>
-<p>本課程以 <span class="ov">OV9281</span>（global shutter，工業常用）與 <span class="ov">OV5640</span> 為主要實例。</p>
+  <p><strong>Orin Nano</strong> 相機能力是「專業級」：<strong>GMSL serdes</strong>（長距離多感測器）、<strong>NVIDIA ISP（libnvivp）</strong>、<strong>Argus</strong> 框架。影像調校自動化程度高一個檔次——你的工作從「逐參數手動」變成「感測器 init 正確 + 場景合理，讓 NVIDIA 自動化收斂」。</p>
+<p>本課程以 <span class="ov">OV9281</span>（global shutter，工業常用）與 <span class="ov">OV5640</span> 為主例。</p>
 </div>
 
 <footer>
   這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>
-  <span class="footer-license">本站教學內容（繁體中文解說）為本站原創，採 CC-BY-4.0；技術名詞與 register 範例引用自 <a href="https://docs.nvidia.com/jetson/" rel="noopener">NVIDIA Jetson 文件</a>、<a href="https://developer.nvidia.com/embedded/learn" rel="noopener">NVIDIA Developer</a> 與公開感測器資料。</span>
+  <span class="footer-license">本站教學內容（繁體中文解說）為本站原創，採 CC-BY-4.0；register 與指令引用自 <a href="https://docs.nvidia.com/jetson/" rel="noopener">NVIDIA Jetson 文件</a>、<a href="https://developer.nvidia.com/embedded/learn" rel="noopener">NVIDIA Developer</a> 與公開感測器資料。</span>
 </footer>
 
 </div>

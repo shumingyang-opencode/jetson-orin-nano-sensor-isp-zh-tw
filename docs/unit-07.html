@@ -26,21 +26,21 @@
 
 <div class="guide">
 <h2>NVIDIA ISP（libnvivp）</h2>
-<p>Orin 的影像品質校正由 <strong>NVIDIA ISP</strong> 負責（位於 <code>libnvivp</code>），處理：黑位、LSC、demosaic、降噪、CCM、gamma、銳化等，並提供統計給 AE/AWB。</p>
 <div class="pipe"><span class="step">RAW</span><span class="arr">→</span><span class="step">黑位</span><span class="arr">→</span><span class="step">LSC</span><span class="arr">→</span><span class="step">demosaic</span><span class="arr">→</span><span class="step">NR</span><span class="arr">→</span><span class="step">CCM</span><span class="arr">→</span><span class="step">gamma</span><span class="arr">→</span><span class="step">輸出</span></div>
+<p>ISP 提供統計（亮度、色彩）給 AE/AWB 演算法自動收斂。</p>
 
-<h2>NVIDIA 的調校介面</h2>
+<h2>NVIDIA 的調校介面特性</h2>
 <ul>
-<li>ISP 參數由 <strong>NVIDIA 內部 tuning</strong>（imager tuning）管理，公開可調有限。</li>
-<li>AE/AWB 由 NVIDIA 演算法自動，支援多種模式。</li>
-<li>相較開源平台，「可視性」低但「自動化」高。</li>
+<li>ISP 參數由 NVIDIA 內部 tuning 管理，<strong>公開可調有限</strong>。</li>
+<li>AE/AWB 自動化強。</li>
+<li>「可視性」低但「自動化」高。</li>
 </ul>
-<div class="callout"><strong>調適心態：</strong>NVIDIA 平台強調「自動調校」——你的工作是提供好的感測器 init 與合理場景，讓 NVIDIA AE/AWB 自行收斂，而非逐參數手動。</div>
+<div class="callout"><strong>調適心態：</strong>NVIDIA 強調自動調校——你的工作是「感測器 init 正確 + 場景合理」，讓 AE/AWB 自行收斂，而非逐參數手動。</div>
 
 
   <div class="outcome">
     <strong>看完這單元你應該能說出：</strong>
-    <ul><li>NVIDIA ISP（libnvivp）的區塊。</li><li>NVIDIA 調校介面的特性（自動化高、可視性低）。</li><li>「自動調校」心態。</li><li>ISP 統計對 AE/AWB 的作用。</li></ul>
+    <ul><li>NVIDIA ISP（libnvivp）區塊。</li><li>ISP 統計回饋給 AE/AWB。</li><li>「自動調校」心態。</li><li>可視性 vs 自動化的取捨。</li></ul>
   </div>
 
   <h2>延伸閱讀</h2>
@@ -57,7 +57,7 @@
 </div>
 
 <footer>這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>
-  <span class="footer-license">本站教學內容（繁體中文解說）為本站原創，採 CC-BY-4.0；技術名詞與 register 範例引用自 <a href="https://docs.nvidia.com/jetson/" rel="noopener">NVIDIA Jetson 文件</a>、<a href="https://developer.nvidia.com/embedded/learn" rel="noopener">NVIDIA Developer</a> 與公開感測器資料。</span></footer>
+  <span class="footer-license">本站教學內容（繁體中文解說）為本站原創，採 CC-BY-4.0；register 與指令引用自 <a href="https://docs.nvidia.com/jetson/" rel="noopener">NVIDIA Jetson 文件</a>、<a href="https://developer.nvidia.com/embedded/learn" rel="noopener">NVIDIA Developer</a> 與公開感測器資料。</span></footer>
 
 </div>
 </body>

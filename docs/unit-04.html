@@ -26,29 +26,30 @@
 
 <div class="guide">
 <h2>tegracam 驅動框架</h2>
-<p>NVIDIA 用 <strong>tegracam</strong>（camera sensor framework）承接感測器驅動，統一曝光/增益等 controls，並讓 Argus 能列舉相機。</p>
+<p>NVIDIA 用 <strong>tegracam</strong> 承接感測器驅動，統一曝光/增益 controls，讓 Argus 能列舉相機。</p>
 <ul>
 <li>感測器驅動（如 OV9281）繼承 tegracam 介面。</li>
-<li>每個感測器在 DTB 宣告一組「camera 節點」。</li>
+<li>每個感測器在 DTB 宣告 camera 節點。</li>
 </ul>
 
-<h2>DTB overlay：宣告感測器</h2>
-<div class="demo-block"><div class="demo-label">DTB 感測器節點（示意）</div><pre>&amp;ov9281_cam0 {
+<h2>DTB 感測器節點</h2>
+<div class="demo-block"><div class="demo-label">camera 節點（示意）</div><pre>&amp;ov9281_cam0 {
     status = "okay";
     reg = &lt;0x36&gt;;        <span class="hl-c"># I2C 位址</span>
-    reset-gpios = ...;    <span class="hl-c"># RESET 腳位</span>
+    reset-gpios = ...;
+    mode0 { ... mclk_khz, pixel_phase ... };
 };</pre></div>
-<p class="hint">修改 DTB 需重新編譯 device tree 並刷入（或放 bootloader overlay）。</p>
+<p class="hint">修改 DTB 需重編 device tree 並刷入（或 bootloader overlay）。</p>
 
 <h2>Argus 如何看到相機</h2>
 <div class="demo-block"><div class="demo-label">列出相機</div><pre>argus_camera --list-cameras
 v4l2-ctl --list-devices</pre></div>
-<div class="callout"><strong>調校關鍵：</strong>Argus 透過感測器驅動的 controls（曝光、增益）與 NVIDIA ISP 配合——驅動註冊正確，Argus 才看得到相機。</div>
+<div class="callout"><strong>調校關鍵：</strong>驅動註冊正確，Argus 才看得到相機；看得到才能控制與調校。</div>
 
 
   <div class="outcome">
     <strong>看完這單元你應該能說出：</strong>
-    <ul><li>tegracam 在 NVIDIA 相機堆疊的角色。</li><li>DTB 感測器節點宣告方式。</li><li>Argus 如何列舉相機。</li><li>驅動→Argus→ISP 的關係。</li></ul>
+    <ul><li>tegracam 角色。</li><li>DTB 感測器節點宣告。</li><li>Argus 列舉相機。</li><li>驅動→Argus→ISP 關係。</li></ul>
   </div>
 
   <h2>延伸閱讀</h2>
@@ -65,7 +66,7 @@ v4l2-ctl --list-devices</pre></div>
 </div>
 
 <footer>這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>
-  <span class="footer-license">本站教學內容（繁體中文解說）為本站原創，採 CC-BY-4.0；技術名詞與 register 範例引用自 <a href="https://docs.nvidia.com/jetson/" rel="noopener">NVIDIA Jetson 文件</a>、<a href="https://developer.nvidia.com/embedded/learn" rel="noopener">NVIDIA Developer</a> 與公開感測器資料。</span></footer>
+  <span class="footer-license">本站教學內容（繁體中文解說）為本站原創，採 CC-BY-4.0；register 與指令引用自 <a href="https://docs.nvidia.com/jetson/" rel="noopener">NVIDIA Jetson 文件</a>、<a href="https://developer.nvidia.com/embedded/learn" rel="noopener">NVIDIA Developer</a> 與公開感測器資料。</span></footer>
 
 </div>
 </body>
