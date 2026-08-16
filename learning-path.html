@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>學習路線 · NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站</title>
+<meta name="description" content="從認識到精通的五層學習路線">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+<div class="container">
+<header><h1>學習路線</h1><p class="subtitle">從「認識」到「精通」的五層路線</p></header>
+<nav class="topnav">  <a href="index.html">首頁</a>
+  <a href="map.html">概念地圖</a>
+  <a href="learning-path.html">學習路線</a>
+  <a href="docs/index.html">單元教學</a>
+  <a href="about.html">關於</a></nav>
+<div class="back-link"><a href="index.html">← 回首頁</a></div>
+<div class="level lv-emerald">
+  <div class="level-head"><span class="level-badge">L0</span><span class="level-title">認識生態</span><span class="level-sub">NVIDIA 相機介面與框架</span></div>
+  <div class="card-grid">
+    <a class="card" href="docs/unit-01.html">
+      <div class="c-name">單元 1 · 平台相機生態</div>
+      <div class="c-zh">CSI/GMSL、Argus/V4L2。</div>
+      <div class="c-tags"><span class="c-tag">概念</span></div>
+    </a>
+    <a class="card" href="docs/unit-02.html">
+      <div class="c-name">單元 2 · 影像感測器基礎</div>
+      <div class="c-zh">Bayer、global shutter。</div>
+      <div class="c-tags"><span class="c-tag">基礎</span></div>
+    </a>
+    <a class="card" href="docs/unit-03.html">
+      <div class="c-name">單元 3 · 感測器通訊介面</div>
+      <div class="c-zh">I2C/SCCB、register。</div>
+      <div class="c-tags"><span class="c-tag">通訊</span></div>
+    </a>
+  </div>
+</div>
+<div class="level lv-cyan">
+  <div class="level-head"><span class="level-badge">L1</span><span class="level-title">Bring-up</span><span class="level-sub">讓感測器在 Orin 上跑起來</span></div>
+  <div class="card-grid">
+    <a class="card" href="docs/unit-04.html">
+      <div class="c-name">單元 4 · 相機框架與驅動</div>
+      <div class="c-zh">tegracam、DTB overlay。</div>
+      <div class="c-tags"><span class="c-tag">驅動</span></div>
+    </a>
+    <a class="card" href="docs/unit-05.html">
+      <div class="c-name">單元 5 · 第一個鏡頭</div>
+      <div class="c-zh">argus_camera / v4l2-ctl。</div>
+      <div class="c-tags"><span class="c-tag">動手做</span></div>
+    </a>
+    <a class="card" href="docs/unit-06.html">
+      <div class="c-name">單元 6 · Bring-up 除錯</div>
+      <div class="c-zh">serdes、register dump。</div>
+      <div class="c-tags"><span class="c-tag">除錯</span></div>
+    </a>
+  </div>
+</div>
+<div class="level lv-amber">
+  <div class="level-head"><span class="level-badge">L2</span><span class="level-title">ISP 管線</span><span class="level-sub">NVIDIA ISP 的校正旅程</span></div>
+  <div class="card-grid">
+    <a class="card" href="docs/unit-07.html">
+      <div class="c-name">單元 7 · ISP 管線深入</div>
+      <div class="c-zh">libnvivp、ISP 區塊。</div>
+      <div class="c-tags"><span class="c-tag">ISP</span></div>
+    </a>
+    <a class="card" href="docs/unit-08.html">
+      <div class="c-name">單元 8 · RAW 擷取與格式</div>
+      <div class="c-zh">RAW、bayer、Argus raw。</div>
+      <div class="c-tags"><span class="c-tag">格式</span></div>
+    </a>
+    <a class="card" href="docs/unit-09.html">
+      <div class="c-name">單元 9 · 平台 ISP 架構差異</div>
+      <div class="c-zh">NVIDIA vs 其他平台。</div>
+      <div class="c-tags"><span class="c-tag">架構</span></div>
+    </a>
+  </div>
+</div>
+<div class="level lv-fuchsia">
+  <div class="level-head"><span class="level-badge">L3</span><span class="level-title">影像調校</span><span class="level-sub">NVIDIA 調校工具與參數</span></div>
+  <div class="card-grid">
+    <a class="card" href="docs/unit-10.html">
+      <div class="c-name">單元 10 · 曝光 AE</div>
+      <div class="c-zh">Argus 曝光控制。</div>
+      <div class="c-tags"><span class="c-tag">調校</span></div>
+    </a>
+    <a class="card" href="docs/unit-11.html">
+      <div class="c-name">單元 11 · 白平衡與色彩</div>
+      <div class="c-zh">NVIDIA AWB/CCM。</div>
+      <div class="c-tags"><span class="c-tag">調校</span></div>
+    </a>
+    <a class="card" href="docs/unit-12.html">
+      <div class="c-name">單元 12 · 鏡頭陰影 LSC</div>
+      <div class="c-zh">NVIDIA LSC。</div>
+      <div class="c-tags"><span class="c-tag">調校</span></div>
+    </a>
+    <a class="card" href="docs/unit-13.html">
+      <div class="c-name">單元 13 · 雜訊與降噪</div>
+      <div class="c-zh">NVIDIA NR。</div>
+      <div class="c-tags"><span class="c-tag">調校</span></div>
+    </a>
+    <a class="card" href="docs/unit-14.html">
+      <div class="c-name">單元 14 · 清晰度/HDR/工作流</div>
+      <div class="c-zh">NVIDIA tuning 流程。</div>
+      <div class="c-tags"><span class="c-tag">調校</span></div>
+    </a>
+  </div>
+</div>
+<div class="level lv-violet">
+  <div class="level-head"><span class="level-badge">L4</span><span class="level-title">比較與實作</span><span class="level-sub">跨平台比較與完整案例</span></div>
+  <div class="card-grid">
+    <a class="card" href="docs/unit-15.html">
+      <div class="c-name">單元 15 · 四平台比較</div>
+      <div class="c-zh">調校能力對照。</div>
+      <div class="c-tags"><span class="c-tag">比較</span></div>
+    </a>
+    <a class="card" href="docs/unit-16.html">
+      <div class="c-name">單元 16 · 多感測器實作</div>
+      <div class="c-zh">GMSL 多相機案例。</div>
+      <div class="c-tags"><span class="c-tag">實作</span></div>
+    </a>
+  </div>
+</div>
+
+<div class="callout"><strong>看完這條路線你應該能</strong>：在 Orin Nano 上完成感測器 bring-up（含 GMSL）、透過 Argus/NVIDIA 工具調校畫質，並能對照其他平台。</div>
+<footer>這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>
+  <span class="footer-license">本站教學內容（繁體中文解說）為本站原創，採 CC-BY-4.0；技術名詞與 register 範例引用自 <a href="https://docs.nvidia.com/jetson/" rel="noopener">NVIDIA Jetson 文件</a>、<a href="https://developer.nvidia.com/embedded/learn" rel="noopener">NVIDIA Developer</a> 與公開感測器資料。</span></footer>
+</div></body></html>

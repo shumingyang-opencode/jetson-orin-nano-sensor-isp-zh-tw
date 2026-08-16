@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>單元 14 · 清晰度、動態範圍與調校工作流 · NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站</title>
+<meta name="description" content="NVIDIA tuning 流程">
+<link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>單元 14 · 清晰度、動態範圍與調校工作流</h1>
+  <p class="subtitle">NVIDIA tuning 流程</p>
+</header>
+
+<nav class="topnav">  <a href="../index.html">首頁</a>
+  <a href="../map.html">概念地圖</a>
+  <a href="../learning-path.html">學習路線</a>
+  <a href="../docs/index.html">單元教學</a>
+  <a href="../about.html">關於</a></nav>
+
+<div class="back-link"><a href="index.html">← 單元教學</a></div>
+
+<div class="guide">
+<h2>清晰度與對比</h2>
+<ul>
+<li>NVIDIA ISP 提供銳化與對比控制（自動化）。</li>
+<li>過度銳化會放大雜訊並產生光暈。</li>
+</ul>
+
+<h2>動態範圍與 HDR</h2>
+<ul>
+<li>Orin 支援多幀/多曝光 HDR。</li>
+<li>高動態場景靠 tone mapping 平衡亮暗細節。</li>
+</ul>
+<div class="callout info"><strong>NVIDIA 調校工作流：</strong>① 感測器 init 正確 ② 確認出圖中性 ③ 讓 NVIDIA AE/AWB 自動收斂 ④ 依場景微調 ⑤ 不同場景回歸。強調「設定合理場景讓自動化做事」。</div>
+
+
+  <div class="outcome">
+    <strong>看完這單元你應該能說出：</strong>
+    <ul><li>NVIDIA 銳化/對比控制。</li><li>多幀 HDR 與 tone mapping。</li><li>NVIDIA 調校工作流的五步。</li><li>「讓自動化做事」的調校哲學。</li></ul>
+  </div>
+
+  <h2>延伸閱讀</h2>
+  <ul>
+    <li>下一篇：<a href="unit-15.html">單元 15 · 四平台影像調校比較</a>。</li>
+<li><a href="https://docs.nvidia.com/jetson/archives/" rel="noopener">NVIDIA 文件</a></li>
+    <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
+  </ul>
+
+  <div class="next-prev">
+    <a href="unit-13.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 13 · 雜訊與降噪</div></a>
+    <a class="np-next" href="unit-15.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 15 · 四平台影像調校功能比較</div></a>
+  </div>
+</div>
+
+<footer>這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>
+  <span class="footer-license">本站教學內容（繁體中文解說）為本站原創，採 CC-BY-4.0；技術名詞與 register 範例引用自 <a href="https://docs.nvidia.com/jetson/" rel="noopener">NVIDIA Jetson 文件</a>、<a href="https://developer.nvidia.com/embedded/learn" rel="noopener">NVIDIA Developer</a> 與公開感測器資料。</span></footer>
+
+</div>
+</body>
+</html>

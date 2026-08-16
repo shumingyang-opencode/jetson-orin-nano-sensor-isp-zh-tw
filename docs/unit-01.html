@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>單元 1 · 平台相機生態總覽 · NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站</title>
+<meta name="description" content="CSI/GMSL、Argus/V4L2">
+<link rel="icon" type="image/svg+xml" href="../assets/favicon.svg">
+<link rel="stylesheet" href="../assets/site.css">
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>單元 1 · 平台相機生態總覽</h1>
+  <p class="subtitle">CSI/GMSL、Argus/V4L2</p>
+</header>
+
+<nav class="topnav">  <a href="../index.html">首頁</a>
+  <a href="../map.html">概念地圖</a>
+  <a href="../learning-path.html">學習路線</a>
+  <a href="../docs/index.html">單元教學</a>
+  <a href="../about.html">關於</a></nav>
+
+<div class="back-link"><a href="index.html">← 單元教學</a></div>
+
+<div class="guide">
+<h2>Orin Nano 的相機能力</h2>
+<p>Jetson Orin Nano 支援 <strong>MIPI CSI-2</strong>，並可透過 <strong>GMSL（Gigabit Multimedia Serial Link）</strong>接遠距離多感測器——這是工業/車載相機的標準做法。</p>
+<div class="pipe"><span class="step">感測器</span><span class="arr">→</span><span class="step">serdes（GMSL）</span><span class="arr">→</span><span class="step">deserializer（如 MAX96712）</span><span class="arr">→</span><span class="step">CSI</span><span class="arr">→</span><span class="step">NVIDIA ISP</span></div>
+
+<h2>雙相機框架</h2>
+<table>
+<tr><th>框架</th><th>用途</th><th>調校角色</th></tr>
+<tr><td><strong>V4L2</strong></td><td>標準 Linux 介面（v4l2-ctl、GStreamer）</td><td>感測器控制</td></tr>
+<tr><td><strong>Argus（libargus）</strong></td><td>NVIDIA 原生相機 API</td><td>進階控制 + ISP</td></tr>
+</table>
+<div class="callout"><strong>重點：</strong>Argus 是 Orin 上「完整調校」的入口——它串起感測器控制、NVIDIA ISP 與輸出。V4L2 則提供相容性。</div>
+
+<h2>感測器模組</h2>
+<p>Orin Nano 常搭配 <span class="ov">OV9281</span>（global shutter，機器視覺）、<span class="ov">OV5640</span> 或官方 Camera Module（IMX219/477）。本站以 OV9281 / OV5640 為主。</p>
+
+
+  <div class="outcome">
+    <strong>看完這單元你應該能說出：</strong>
+    <ul><li>Orin Nano 的 CSI + GMSL 相機架構。</li><li>V4L2 與 Argus 的分工。</li><li>GMSL serdes 在工業相機的角色。</li><li>常見的 OmniVision 感測器模組。</li></ul>
+  </div>
+
+  <h2>延伸閱讀</h2>
+  <ul>
+    <li>下一篇：<a href="unit-02.html">單元 2 · 影像感測器基礎</a>。</li>
+<li><a href="https://developer.nvidia.com/embedded/jetson-modules" rel="noopener">NVIDIA Jetson Modules</a></li>
+    <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
+  </ul>
+
+  <div class="next-prev">
+    <a href="index.html"><div class="np-label">← 上一層</div><div class="np-name">單元教學目錄</div></a>
+    <a class="np-next" href="unit-02.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 2 · 影像感測器基礎</div></a>
+  </div>
+</div>
+
+<footer>這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>
+  <span class="footer-license">本站教學內容（繁體中文解說）為本站原創，採 CC-BY-4.0；技術名詞與 register 範例引用自 <a href="https://docs.nvidia.com/jetson/" rel="noopener">NVIDIA Jetson 文件</a>、<a href="https://developer.nvidia.com/embedded/learn" rel="noopener">NVIDIA Developer</a> 與公開感測器資料。</span></footer>
+
+</div>
+</body>
+</html>
