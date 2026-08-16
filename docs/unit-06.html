@@ -26,31 +26,45 @@
 <div class="back-link"><a href="index.html">← 單元教學</a></div>
 
 <div class="guide">
-<h2>Bring-up 四件事</h2>
+<h2>6.1 Bring-up 四件事</h2>
 <table>
-<tr><th>檢查項</th><th>驗證</th></tr>
-<tr><td>電源</td><td>AVDD/DVDD 到位、時序</td></tr>
-<tr><td>Clock</td><td>MCLK 輸出、PLL 鎖定</td></tr>
-<tr><td>I2C</td><td>i2cdetect（GMSL 先打通 deserializer）</td></tr>
-<tr><td>MIPI</td><td>dmesg 無 CSI 錯誤、argus 列舉</td></tr>
+<tr><th>檢查項</th><th>驗證</th><th>工具</th></tr>
+<tr><td>電源</td><td>AVDD/DVDD 到位、時序</td><td>示波器/電表</td></tr>
+<tr><td>Clock</td><td>MCLK 輸出、PLL 鎖定</td><td>示波器 / dmesg</td></tr>
+<tr><td>I2C</td><td>i2cdetect（GMSL 先打通 deserializer）</td><td>i2c-tools</td></tr>
+<tr><td>MIPI</td><td>dmesg 無 CSI 錯誤、argus 列舉</td><td>dmesg / argus</td></tr>
 </table>
 
-<h2>GMSL serdes 除錯</h2>
-<div class="callout warn"><strong>GMSL 三步：</strong>① deserializer I2C 通道切到對的 link ② 確認 serdes lock ③ 感測器 I2C 才可通。先用 vendor 工具確認 lock，再談感測器。</div>
+<h2>6.2 上電時序（工業模組通用）</h2>
+<div class="pipe"><span class="step">AVDD/DVDD 穩定</span><span class="arr">→</span><span class="step">MCLK</span><span class="arr">→</span><span class="step">RESET 釋放</span><span class="arr">→</span><span class="step">I2C 可通（GMSL 經 serdes）</span><span class="arr">→</span><span class="step">MIPI 輸出</span></div>
+<div class="callout warn"><strong>最常見錯誤：</strong>RESET 未釋放就下 I2C → register「看似能寫但沒生效」。Orin 上 GMSL 模組的 reset/電源由模組與 DTB 管理。</div>
 
-<h2>Register dump 實作</h2>
+<h2>6.3 GMSL serdes 除錯（三步）</h2>
+<div class="callout warn"><strong>GMSL 三步：</strong>① deserializer（如 MAX96712）的 I2C 通道切到對的 link ② 確認 serdes lock（vendor 工具）③ 感測器 I2C 才可通。先確認 lock，再談感測器——這是 GMSL 與 CSI 直連最大的不同。</div>
+
+<h2>6.4 用 dmesg 追線索</h2>
+<div class="demo-block"><div class="demo-label">除錯指令</div><pre>dmesg | grep -i -E "ov9281|tegra-camera|vi5|csi"
+cat /sys/kernel/debug/bpmp/debug/clk/...   <span class="hl-c"># 檢查 clock</span></pre></div>
+<table>
+<tr><th>dmesg 訊號</th><th>意義</th></tr>
+<tr><td><code>tegra-camera-rtcpu</code> 正常載入</td><td>相機 RTCPU 就緒</td></tr>
+<tr><td><code>vi5: probe success</code></td><td>影像單元就緒</td></tr>
+<tr><td><code>csi: no data / timeout</code></td><td>MIPI 沒資料 → serdes/感測器</td></tr>
+</table>
+
+<h2>6.5 Register dump 實作</h2>
 <div class="demo-block"><div class="demo-label">透過 tegracam controls</div><pre>v4l2-ctl -d /dev/v4l-subdev0 -C exposure
 v4l2-ctl -d /dev/v4l-subdev0 -C analogue_gain</pre></div>
 
-<h2>Bring-up 決策樹</h2>
+<h2>6.6 Bring-up 決策樹</h2>
 <div class="demo-block"><div class="demo-label">「argus 看不到相機」決策樹</div><pre>1. dmesg 有 tegra-camera/感測器 probe？
-   ├─ error → DTB / 電源 / serdes
+   ├─ error ─→ DTB / 電源 / serdes
    └─ ok ─┐
 2. (GMSL) serdes lock？
-   ├─ 否 → deserializer / 線材 / 通道
+   ├─ 否 ─→ deserializer / 線材 / 通道
    └─ 是 ─┐
 3. i2cdetect 讀到感測器 ID？
-   ├─ 否 → I2C 通道 / 位址
+   ├─ 否 ─→ I2C 通道 / 位址
    └─ 是 ─┐
 4. argus_camera 出圖 → ✅</pre></div>
 
