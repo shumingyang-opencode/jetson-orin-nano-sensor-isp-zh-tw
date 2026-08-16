@@ -37,7 +37,21 @@
 <li>Orin 支援多幀/多曝光 HDR。</li>
 <li>高動態場景靠 tone mapping 平衡亮暗。</li>
 </ul>
-<div class="callout info"><strong>NVIDIA 調校工作流：</strong>① 感測器 init 正確 ② 出圖中性 ③ AE/AWB 自動收斂 ④ 依場景微調 ⑤ 回歸。強調「設定合理場景讓自動化做事」。</div>
+<div class="callout info"><strong>NVIDIA 調校工作流：</strong>① 感測器 init 正確 ② 出圖中性 ③ AE/AWB 自動收斂 ④ 依場景微調 ⑤ 回歸。強調「設定合理場景讓自動化做事」。</div><h2>14.6 動態範圍與 HDR（本平台）</h2>
+<ul>
+<li>Orin 支援多幀/多曝光 HDR；運動場景用單幀+tone mapping。</li>
+<li>HDR ≠ 萬能：運動場景用單幀 + tone mapping；靜態高動態才用多幀。</li>
+</ul>
+<div class="callout warn"><strong>工程取捨：</strong>先量測場景動態範圍需求（亮/暗是否同時爆掉）再決定 HDR 或 tone mapping。</div>
+<h2>14.7 每次改動的記錄範本</h2>
+<div class="demo-block"><div class="demo-label">tuning 改動 log</div><pre>日期: ____  場景: ____
+改動: 參數 A → B
+原因: ____
+結果: ____（量化）
+回歸: ____ ✓/✗
+附圖: ____</pre></div>
+<div class="callout"><strong>紀律：</strong>可重現的調校 = 完整 log。一次只改一個參數、統一場景比較。</div>
+
 
 
   <div class="outcome">

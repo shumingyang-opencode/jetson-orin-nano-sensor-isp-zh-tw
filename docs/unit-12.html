@@ -34,7 +34,22 @@
 <li>NVIDIA ISP 內建 <strong>LSC</strong> 網格增益補償。</li>
 <li>校正資料由 NVIDIA 工具產生（拍灰卡/積分球）。</li>
 </ul>
-<div class="callout warn"><strong>關鍵：</strong>LSC 是「鏡頭 + 感測器」組合特有——換鏡頭或感測器板就要重新校正；多感測器每顆獨立 LSC。</div>
+<div class="callout warn"><strong>關鍵：</strong>LSC 是「鏡頭 + 感測器」組合特有——換鏡頭或感測器板就要重新校正；多感測器每顆獨立 LSC。</div><h2>12.6 LSC 網格結構（本平台）</h2>
+<ul>
+<li>本平台 LSC 路線：<strong>NVIDIA 工具 / 通用增益圖</strong>。</li>
+<li>網格每節點存 R/Gr/Gb/B 增益，節點間插值。</li>
+<li>有平台 ISP 時用平台網格格式；否則用後處理增益圖。</li>
+</ul>
+
+<h2>12.7 手算 LSC 增益圖（無工具時）</h2>
+<div class="demo-block"><div class="demo-label">從均勻灰 RAW 推算</div><pre>python3 - <<'EOF'
+import numpy as np
+# raw = 讀取的 RAW（分通道 R/Gr/Gb/B）
+# center = 中央區均值；gain = center / cell（四周>1）
+# 需分通道各自計算；對純灰卡才準
+EOF</pre></div>
+<div class="callout"><strong>注意：</strong>手算只為理解；量產請用工具校正。換鏡頭後暗角比變化 >5% → 重新校正。</div>
+
 
 
   <div class="outcome">
