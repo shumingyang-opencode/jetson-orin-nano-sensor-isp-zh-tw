@@ -128,6 +128,46 @@ AE: 中央 ROI ──→ 主體亮 → 天空爆（可接受）</pre></div>
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>7.9 進階真實情境 Worked Example：自訂 ISP Pipeline 處理多感測器輸入</h2>
+<p>場景：你需要用 NVIDIA ISP 同時處理 OV9281（灰階 RAW）和 OV5640（彩色 RAW），最終輸出兩路 NV12 流。</p>
+<div class="demo-block"><div class="demo-label">用 libargus 建立雙 pipeline</div><pre><span class="hl-c"># 初始化 Argus</span>
+import argus
+<span class="hl-c"># Sensor 0: OV9281 → ISP pipeline 0 → NV12 output 0</span>
+<span class="hl-c"># Sensor 1: OV5640 → ISP pipeline 1 → NV12 output 1</span>
+session = argus.createSession()
+pipeline0 = argus.createPipeline(session, sensor=0, outputFormat='NV12')
+pipeline1 = argus.createPipeline(session, sensor=1, outputFormat='NV12')
+<span class="hl-c"># 關鍵：兩個 pipeline 共用同一個 session，但 ISP instance 各自獨立</span>
+<span class="hl-c"># 注意：Orin Nano ISP bandwidth 有限，兩路同時高解析度可能降速</span></pre></div>
+<p><strong>設計決策：</strong>OV9281 走灰階 pipeline（跳過 CCM/AWB），OV5640 走全 ISP pipeline。分開處理可節省 ISP 資源，且各感測器的調校參數互不干擾。</p>
+
+<h2>7.10 深入原理擴充：NVDEC vs NVINF 在影像處理中的角色</h2>
+<p>Orin Nano 有兩種硬體加速器常被混淆：</p>
+<table>
+<tr><th>加速器</th><th>功能</th><th>在 ISP pipeline 中的角色</th></tr>
+<tr><td>NVDEC</td><td>硬體影片解碼（H.264/H.265/AV1）</td><td>解碼壓縮影片後送 ISP 處理（例如：從 NAS 讀影片做分析）</td></tr>
+<tr><td>NVINF（NVINfer）</td><td>張量推論引擎</td><td>不直接處理影像像素，但可在 ISP 後做 AI 推論</td></tr>
+<tr><td>NVJPEG</td><td>硬體 JPEG 編解碼</td><td>JPEG 擷取/壓縮（不經過 ISP pipeline）</td></tr>
+</table>
+<div class="callout warn"><strong>大家以為沒問題但其實是陷阱：</strong>「用 NVDEC 解碼影片後直接送 ISP」——NVDEC 輸出是 NV12（已解碼），不需要再做 ISP demosaic。若你誤以為需要 ISP 處理 NVDEC 輸出，會多跑一趟不必要 pipeline 且可能導致色彩失真（重複 demosaic）。</div>
+
+<h2>7.11 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>ISP pipeline 出圖但色彩偏暗</td><td>LSC/AWB/CCM 參數未載入（使用預設值）</td><td>用 NVIDIA tuning tool 載入校正檔；確認 ISP pipeline 的 setControls 已呼叫</td></tr>
+<tr><td>多路 ISP pipeline 同時跑時其中一路掉幀</td><td>ISP bandwidth 超限（Orin Nano 有上限）</td><td>降低單路解析度或幀率；或讓其中一路 bypass ISP</td></tr>
+<tr><td>ISP 出圖有殘影（ghosting）</td><td>temporal NR（時域降噪）設定過強</td><td>降低 TNR 強度；或關閉 TNR 測試是否為 TNR 導致</td></tr>
+<tr><td>Argus pipeline 回傳 "ISP processing error"</td><td>ISP firmware crash（可能因為 invalid register setting）</td><td>reset RTCPU（<code>echo 1 > /sys/kernel/debug/rtpu/reset</code>）；重新開機</td></tr>
+<tr><td>ISP 出圖尺寸與設定不符</td><td>scaler/crop 設定錯誤（DTB 或 Argus 參數）</td><td>用 <code>media-ctl -p</code> 確認 scaler 的輸入/輸出尺寸</td></tr>
+</table>
+
+<h2>7.12 進階挑戰題</h2>
+<ol>
+<li>用 Argus API 建立一個「雙 pipeline」範例：OV9281 走 bypass（不經 ISP），OV5640 走完整 ISP。比較兩路的輸出差異（延遲、格式、品質）。</li>
+<li>設計一個 ISP bandwidth 測試：逐路提高解析度/幀率，記錄何時開始掉幀，畫出 ISP 的「效能邊界圖」。</li>
+<li>若你需要用 NVDEC 解碼 H.264 影片後做 AI 推論，畫出完整的資料流：NVDEC → ISP → NVINF，標出每步的格式轉換。</li>
+</ol>
+
   <div class="next-prev">
     <a href="unit-06.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 6 · Sensor Bring-up 與除錯</div></a>
     <a class="np-next" href="unit-08.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 8 · RAW 擷取與資料格式</div></a>

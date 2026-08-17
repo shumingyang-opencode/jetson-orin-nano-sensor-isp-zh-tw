@@ -169,6 +169,62 @@ EOF</pre></div>
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>14.13 進階真實情境 Worked Example：完整 ISP 調校工作流（OV9281 + 廣角鏡頭）</h2>
+<p>場景：OV9281 搭配 120° 廣角鏡頭，需要完成從「出圖」到「量產級影像品質」的完整調校。</p>
+<div class="demo-block"><div class="demo-label">OV9281 完整調校 SOP</div><pre><span class="hl-c"># Phase 1: 基礎設定（Day 1）</span>
+<span class="hl-c"># 1.1 黑位校正（BLC）：全遮鏡頭</span>
+argus_camera --mode 0 --raw-file black.raw --duration 1
+<span class="hl-c"># 計算黑位平均值 → 設定 BLC offset</span>
+<span class="hl-c"># 1.2 LSC 校正：拍白牆</span>
+argus_camera --mode 0 --raw-file white.raw --duration 1
+<span class="hl-c"># 產生 LSC 校正表</span>
+
+<span class="hl-c"># Phase 2: 色彩校正（Day 2）</span>
+<span class="hl-c"># 2.1 AWB 校正：拍 X-Rite ColorChecker</span>
+argus_camera --mode 0 --raw-file colorchecker.raw --duration 1
+<span class="hl-c"># 計算 AWB gain + CCM</span>
+<span class="hl-c"># 2.2 Gamma 校正：確保中間調自然</span>
+<span class="hl-c"># 調整 gamma curve（通常 2.2）</span>
+
+<span class="hl-c"># Phase 3: 雜訊/清晰度（Day 3）</span>
+<span class="hl-c"># 3.1 NR 調校：低光/高光各拍一組</span>
+<span class="hl-c"># 找到 NR level 的最佳平衡點</span>
+<span class="hl-c"># 3.2 Sharpen 調校：拍 ISO 12233 解析度板</span>
+<span class="hl-c"># 調整 sharpen level 避免 over/under sharpen</span>
+
+<span class="hl-c"># Phase 4: 回歸測試（Day 4）</span>
+<span class="hl-c"># 4.1 多場景測試：室內/室外/低光/高對比</span>
+<span class="hl-c"># 4.2 量化指標：SNR、色彩偏差、動態範圍</span>
+<span class="hl-c"># 4.3 記錄最終參數表</span></pre></div>
+<p><strong>設計決策：</strong>調校順序很重要：BLC → LSC → AWB/CCM → Gamma → NR → Sharpen。每一步都依賴前一步的結果——例如 CCM 需要正確的 AWB gain 作為 input。</p>
+
+<h2>14.14 深入原理擴充：HDR 與動態範圍的「物理限制」</h2>
+<p>動態範圍（Dynamic Range）= 最亮可分辨亮度 / 最暗可分辨亮度。感測器的 DR 受限於：</p>
+<table>
+<tr><th>限制因素</th><th>說明</th><th>突破方法</th></tr>
+<tr><td>Full Well Capacity</td><td>pixel 能容納的最大電子數</td><td>用 HDR 模式（多曝光合成）</td></tr>
+<tr><td>Read Noise</td><td>讀取時的電子雜訊</td><td>降低 analog gain（但犧牲感光度）</td></tr>
+<tr><td>Quantization</td><td>ADC 位元深（10-bit → 60dB 理論 DR）</td><td>用 12-bit 或 14-bit ADC</td></tr>
+</table>
+<div class="callout warn"><strong>陷阱：</strong>「HDR 模式可以無限提升 DR」——HDR 是用多曝光合成，有「運動模糊」和「幀率降低」的代價。在高速場景（如自駕車），HDR 的 ghosting（殘影）是嚴重問題。</div>
+
+<h2>14.15 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>調校後影像比未調校更差</td><td>調校順序錯誤（例如先做 Sharpen 再做 NR）</td><td>嚴格遵循 BLC→LSC→AWB→Gamma→NR→Sharpen 順序</td></tr>
+<tr><td>動態範圍不足（亮部過曝或暗部死黑）</td><td>HDR 未啟用 或 sensor DR 夠用但 ISP 未處理</td><td>確認 sensor 支援 HDR 模式；用 Argus 開啟 HDR</td></tr>
+<tr><td>Sharpen 過度導致「光暈」（halo）</td><td>sharpen level 過高 或 sharpen radius 過大</td><td>降低 sharpen level；減小 radius（只 sharpen 邊緣）</td></tr>
+<tr><td>Gamma 校正後中間調偏暗</td><td>Gamma 值過大（例如 2.5 而非 2.2）</td><td>調整 gamma 到 2.0-2.2 範圍；用中灰卡驗證</td></tr>
+<tr><td>調校參數在不同場景間無法通用</td><td>光源差異太大（日光 vs 日光燈）</td><td>為每種光源建立獨立的調校 profile；或用 auto 模式 + 微調</td></tr>
+</table>
+
+<h2>14.16 進階挑戰題</h2>
+<ol>
+<li>為你的 OV9281 建立一份完整的「調校參數表」，涵蓋：BLC offset、LSC grid、AWB gain、CCM、Gamma、NR level、Sharpen level。每個參數附上量測方法。</li>
+<li>設計一個「調校品質量化」腳本：從 RAW 出發，自動計算 SNR、色彩偏差（ΔE）、動態範圍、MTF（清晰度指標），並與「目標值」比較。</li>
+<li>若你需要將調校參數從「開發環境」複製到「量產板」，設計一個參數打包/部署流程。</li>
+</ol>
+
   <div class="next-prev">
     <a href="unit-13.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 13 · 雜訊與降噪</div></a>
     <a class="np-next" href="unit-15.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 15 · 四平台影像調校功能比較</div></a>

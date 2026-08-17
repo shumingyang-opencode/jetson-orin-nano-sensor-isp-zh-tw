@@ -145,6 +145,52 @@ EOF</pre></div>
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>2.13 進階真實情境 Worked Example：OV9281 在 Orin Nano 上做 Line-Scan 模擬</h2>
+<p>場景：工業傳送帶需要「線掃描」（line-scan）效果來檢測產品表面缺陷。OV9281 是 area sensor，但利用其 global shutter 特性，可以用軟體模擬 line-scan：只取每幀的中間一行 pixel。</p>
+<div class="demo-block"><div class="demo-label">模擬 line-scan 工作流</div><pre><span class="hl-c"># 1. 設定 OV9281 為全解析度 1280x800, 120fps</span>
+v4l2-ctl -d /dev/v4l-subdev0 --set-fmt-video=width=1280,height=800,pixelformat=GREY
+<span class="hl-c"># 2. 用 GStreamer 擷取並只取中間行（800/2=400）</span>
+gst-launch-1.0 v4l2src device=/dev/video0 ! \
+  video/x-raw,format=GRAY8,width=1280,height=800,framerate=120/1 ! \
+  videobox left=0 right=0 top=399 bottom=-400 ! \
+  multifilesink location=line_%04d.raw
+<span class="hl-c"># 3. 逐行拼成完整影像（Python）</span>
+python3 - <<'EOF'
+import numpy as np, glob
+lines = [np.fromfile(f, dtype=np.uint8) for f in sorted(glob.glob('line_*.raw'))]
+np.array(lines).tofile('linescan.raw')
+print(f'拼接完成：{len(lines)} 行 x {lines[0].shape[0]} 像素')
+EOF</pre></div>
+<p><strong>設計決策：</strong>OV9281 的 global shutter 確保每幀的行間無果凍效應（rolling shutter 會扭曲），120fps 提供高密度取樣。Orin 的 VI channel 只需一路，ISP 不必啟用（直接取灰階 RAW）。</p>
+
+<h2>2.14 深入原理擴充：Global Shutter 的「同時曝光」不是「同時讀出」</h2>
+<p>Global shutter 感測器的每個 pixel 同時開始曝光、同時結束曝光（這是它比 rolling shutter 的優勢），但<strong>讀出（readout）仍然是逐列依次進行的</strong>。讀出速度受感測器內部 ADC 與匯流排頻寬限制。</p>
+<table>
+<tr><th>概念</th><th>Global Shutter</th><th>Rolling Shutter</th></tr>
+<tr><td>曝光起始</td><td>所有 pixel 同時</td><td>逐列遞延</td></tr>
+<tr><td>曝光結束</td><td>所有 pixel 同時</td><td>逐列遞延</td></tr>
+<tr><td>讀出</td><td>逐列依次（但曝光已結束）</td><td>逐列同時曝光+讀出</td></tr>
+<tr><td>對運動物體</td><td>整幀一致，無果凍</td><td>果凍效應（skew/rolling）</td></tr>
+</table>
+<div class="callout warn"><strong>陷阱：</strong>「Global shutter 就不會有運動模糊」是錯的——它消除的是「果凍/skew」，不是「模糊」。曝光時間長時，運動物體仍然會 blur（只是整幀 blur 一致）。</div>
+
+<h2>2.15 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>OV9281 出圖有明顯果凍（直線彎曲）</td><td>感測器並非真的 global shutter 模式（DTB mode 設定錯）</td><td>確認 OV9281 的 mode 設為 global shutter（register 0x0106）；用高速運動物體測試</td></tr>
+<tr><td>Bayer 偽影（灰卡拍出彩色）</td><td>DTB 或 Argus 設定的 Bayer order 與感測器實際不符</td><td>查感測器 datasheet 的輸出格式；嘗試 4 種 Bayer 起點（RGGB/BGGR/GRBG/GBRG）</td></tr>
+<tr><td>暗部雜訊嚴重</td><td>感測器增益過高 或 黑位偏高</td><td>用全遮測黑位（參照單元 8）；降低 analog gain 設定</td></tr>
+<tr><td>不同 mode 切換後色彩偏差</td><td>binning/crop 改變了 effective Bayer pattern 或 lens shading</td><td>每次切 mode 後重新做白平衡校正；鎖定調校用的 mode</td></tr>
+<tr><td>OV9281 在低光下幀率驟降</td><td>auto exposure 拉長曝光時間以補償亮度</td><td>固定曝光時間（手動 AE）；或接受低光降幀是正常行為</td></tr>
+</table>
+
+<h2>2.16 進階挑戰題</h2>
+<ol>
+<li>設計一個測試流程，量化 OV9281 在不同 gain 設定下的 SNR 曲線（提示：拍灰卡、計算亮部/暗部 σ/mean ratio）。</li>
+<li>若你的應用需要同時使用 OV9281（global shutter）和 OV5640（rolling shutter），規劃一張「特性比較表」涵蓋：時序特性、適用場景、DTB 配置差異、ISP 調校注意事項。</li>
+<li>嘗試用 Argus 的 `--exposure-time` 參數固定不同曝光值，觀察 OV9281 在「運動物體」下的果凍變化，寫出你的觀察結論。</li>
+</ol>
+
   <div class="next-prev">
     <a href="unit-01.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 1 · 平台相機生態總覽</div></a>
     <a class="np-next" href="unit-03.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 3 · 感測器通訊介面</div></a>

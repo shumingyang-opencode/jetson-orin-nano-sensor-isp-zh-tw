@@ -149,6 +149,49 @@ gst-launch-1.0 v4l2src device=/dev/video0 ! \
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>5.10 進階真實情境 Worked Example：用 GStreamer 管線做即時影像處理 Pipeline</h2>
+<p>場景：你需要在 Orin Nano 上做到「擷取 → ISP 處理 → 即時顯示 → 同時錄影」的完整 pipeline。</p>
+<div class="demo-block"><div class="demo-label">GStreamer 多路輸出 pipeline</div><pre><span class="hl-c"># 擷取 NV12（ISP 處理後）→ 分流：一路顯示、一路存檔</span>
+gst-launch-1.0 nvarguscamerasrc sensor-id=0 ! \
+  'video/x-raw(memory:NVMM), format=NV12, width=1920, height=1080, framerate=30/1' ! \
+  tee name=t \
+  t. ! queue ! nvvidconv ! 'video/x-raw(memory:NVMM), format=NV12' ! \
+     nveglglessink \
+  t. ! queue ! nvvidconv ! 'video/x-raw(memory:NVMM), format=NV12' ! \
+     nvv4l2h264enc ! h264parse ! mp4mux ! filesink location=output.mp4
+<span class="hl-c"># - tee 分流：一進多出</span>
+<span class="hl-c"># - queue：緩衝防止 block</span>
+<span class="hl-c"># - nvvidconv：格式/尺寸轉換（GPU 硬體加速）</span></pre></div>
+<p><strong>設計決策：</strong>用 <code>nvarguscamerasrc</code> 而非 <code>v4l2src</code>：前者走 NVIDIA ISP 完整管線，後者取原始 V4L2 輸出。<code>tee</code> 元件在 NVIDIA 的 GStreamer plugin 中是 GPU 級分流，不佔 CPU。</p>
+
+<h2>5.11 深入原理擴充：Argus 的 session / stream / request 模型</h2>
+<p>Argus API 的核心不是「拍照」，而是「排程」：每個 frame 是一個 <strong>request</strong>，多個 request 排在 <strong>stream</strong> 裡，stream 屬於一個 <strong>session</strong>。</p>
+<table>
+<tr><th>概念</th><th>說明</th><th>常見誤解</th></tr>
+<tr><td>Session</td><td>一組相機的使用環境</td><td>以為可以跨 session 共享 buffer（不行）</td></tr>
+<tr><td>Stream</td><td>一個輸出格式的幀序列</td><td>以為一個 session 只能有一個 stream（可多個）</td></tr>
+<tr><td>Request</td><td>一幀的 ISP 設定 + 輸出 buffer</td><td>以為 request 是同步的（實際是非同步排程）</td></tr>
+<tr><td>Event</td><td>ISP 回傳的狀態（AE 收斂、幀完成…）</td><td>以為不處理 event 也沒事（可能導致 buffer 洩漏）</td></tr>
+</table>
+<div class="callout warn"><strong>陷阱：</strong>「argus_camera 拍一張照片就好」背後其實是 Argus 自動管理 session + stream + request queue。若你用 libargus 自建 pipeline，忘記 <code>request->disable()`</code> 或沒呼叫 <code>EventQueue::waitForEvent()</code>，buffer 會慢慢耗盡直到 OOM。</div>
+
+<h2>5.12 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>gst-launch-1.0 串流後畫面停住不動</td><td>下游元件 block（例如 nveglglessink 開了視窗但被遮住）</td><td>加 <code>-v</code> 看哪個 element 的 queue 滿了；確認下游有正常消費 buffer</td></tr>
+<tr><td>argus_camera 回傳 "Camera initialization failed"</td><td>ISP 資源被其他程序佔用 或 sensor mode 不支援</td><td>kill 其他 camera 程序；用 <code>argus_camera --list-sensors</code> 確認支援 mode</td></tr>
+<tr><td>GStreamer pipeline 報 "nvarguscamerasrc: Caps negotiation failed"</td><td>下游要求的 format 與 camera 輸出不相容</td><td>在 nvarguscamerasrc 後加 <code>capsfilter</code> 明確指定 format</td></tr>
+<tr><td>錄影檔案播放時跳幀或音畫不同步</td><td>h264 encode 速度跟不上擷取速度</td><td>降低擷取解析度或幀率；確認 nvv4l2h264enc 使用硬體編碼器</td></tr>
+<tr><td>v4l2-ctl 能出圖但 gst-launch 無法連接</td><td>GStreamer plugin 未安裝 或 版本不符</td><td>確認 gstreamer1.0-plugins-bad/good/ugly 已安裝；<code>gst-inspect-1.0 nvarguscamerasrc</code> 測試</td></tr>
+</table>
+
+<h2>5.13 進階挑戰題</h2>
+<ol>
+<li>用 GStreamer 建立一個 pipeline：從 OV9281 擷取 1280x800 灰階，送到 Python 腳本做即時邊緣偵測（用 OpenCV），再把結果顯示在 EGL 視窗上。</li>
+<li>比較 <code>v4l2src</code> 與 <code>nvarguscamerasrc</code> 的延遲差異：在 pipeline 中加入 <code>identity</code> 元件記錄 timestamp，計算從 sensor 到 sink 的端到端延遲。</li>
+<li>撰寫一個 argus_camera 的 wrapper script，自動偵測目前連接了幾顆感測器、支援哪些 mode，並讓使用者選一顆開拍。</li>
+</ol>
+
   <div class="next-prev">
     <a href="unit-04.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 4 · 平台相機框架與驅動</div></a>
     <a class="np-next" href="unit-06.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 6 · Sensor Bring-up 與除錯</div></a>

@@ -135,6 +135,47 @@ sudo i2ctransfer -y 0 w2@0x36 0x35 0x00 r1   <span class="hl-c"># 應回 0x50</s
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>3.11 進階真實情境 Worked Example：GMSL 模組的 I2C 與 SCCB 透傳</h2>
+<p>場景：透過 GMSL deserializer（MAX96712）遠端控制 OV9281 的 register。GMSL 把 I2C 訊號「隧道化」到遠端 serializer + 感測器。</p>
+<div class="demo-block"><div class="demo-label">GMSL I2C 透傳驗證</div><pre><span class="hl-c"># 1. 確認 deserializer 本身可讀（local I2C）</span>
+sudo i2cget -y 0 0x48 0x000d   <span class="hl-c"># MAX96712 device ID register</span>
+<span class="hl-c"># 2. 設定 GMSL link 的 I2C remap（把遠端感測器映射到不同位址）</span>
+sudo i2cset -y 0 0x48 0x0000 0x36   <span class="hl-c"># link0 remote sensor alias = 0x36</span>
+sudo i2cset -y 0 0x48 0x0001 0x10   <span class="hl-c"># link0 remote sensor base = 0x10</span>
+<span class="hl-c"># 3. 透過 deserializer 讀遠端 OV9281 的 chip ID</span>
+sudo i2cget -y 0 0x36 0x300a   <span class="hl-c"># OV9281 chip ID register → 應回 0x9281</span>
+<span class="hl-c"># 4. 若步驟 3 失敗：確認 link lock + 線材</span>
+i2cget -y 0 0x48 0x0013   <span class="hl-c"># link0 lock status</span></pre></div>
+<p><strong>設計決策：</strong>GMSL 的 I2C 透傳對驅動完全透明——tegracam 驅動以為自己在做 local I2C，實際上經過了 GMSL tunnel。這就是為什麼「除錯第一步是確認 lock」：lock 不通，I2C 就到不了遠端。</p>
+
+<h2>3.12 深入原理擴充：SCCB vs I2C 的微妙差異</h2>
+<p>OmniVision 感測器使用 <strong>SCCB（Serial Camera Control Bus）</strong>，外觀與 I2C 極像但有細微差異：</p>
+<table>
+<tr><th>面向</th><th>I2C</th><th>SCCB</th></tr>
+<tr><td>時脈線</td><td>SCL（可被 slave 拉低 Stretch）</td><td>SCCB_CLK（不支持 stretch）</td></tr>
+<tr><td>資料線</td><td>SDA（雙向）</td><td>SCCB_DATA（三態，含 acknowledge）</td></tr>
+<tr><td>Acknowledge</td><td>第 9 個 clock 由 slave 拉低</td><td>SCCB 用 "don't care" 位（bit 8）</td></tr>
+<tr><td>相容性</td><td>標準 I2C 控制器可驅動 SCCB</td><td>SCCB 設備接 I2C 匯流排通常可行</td></tr>
+</table>
+<div class="callout warn"><strong>陷阱：</strong>「I2C 讀 OV9281 沒有 ACK」——有時候不是感測器壞了，而是 I2C 控制器的 clock stretch 設定與 SCCB 衝突。Orin 的 I2C 控制器預設有 stretch timeout，若 OV9281 的 SCCB 不 stretch，timeout 條件可能誤觸。解法：降低 I2C 時脈頻率（從 400kHz 降到 100kHz）測試。</div>
+
+<h2>3.13 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>i2cget 回傳 -1（Read failed）</td><td>I2C 匯流排被其他裝置鎖住 或 位址衝突</td><td>用 i2cdetect 掃描整條 匯流排確認佔用裝置；暫時移除其他 I2C 裝置測試</td></tr>
+<tr><td>GMSL 遠端感測器 I2C 讀不到</td><td>deserializer link 未 lock 或 I2C remap 未設定</td><td>先讀 deserializer lock register；再設定正確的 remote alias/base</td></tr>
+<tr><td>I2C 讀得到 ID 但設定 register 後無效</td><td>register 位址位元深（8-bit vs 16-bit）設定錯</td><td>確認感測器的 register addressing 模式（8-bit 位址用 i2cset -y 0 ADDR REG8 VAL；16-bit 用 i2cset -y 0 ADDR REG16 VAL）</td></tr>
+<tr><td>I2C 通訊偶爾成功偶爾失敗</td><td>線材過長 或 pull-up 電阻值不匹配</td><td>縮短 I2C 線長；確認 pull-up 在 2.2kΩ~4.7kΩ 範圍；降低 I2C 時脈</td></tr>
+<tr><td>多顆感測器共享 I2C 匯流排時互相干擾</td><td>I2C 位址衝突（同型感測器預設位址相同）</td><td>用 GMSL I2C remap 或 硬體 solder 切換位址腳</td></tr>
+</table>
+
+<h2>3.14 進階挑戰題</h2>
+<ol>
+<li>用 `i2cdump` 工具 dump OV9281 的前 256 個 register，與 datasheet 比對，找出哪幾個 register 在上電後有「非預設值」（這些就是 initialization 的關鍵）。</li>
+<li>設計一個「I2C 健康檢查」腳本：依序掃描所有 I2C 匯流排、列出每個位址的裝置類型、標記異常（回傳值不一致的裝置）。</li>
+<li>若你的 GMSL 系統有 3 條 link，畫出完整的 I2C remap 對照表：每條 link 的 serializer 位址、deserializer local alias、感測器 remote base。</li>
+</ol>
+
   <div class="next-prev">
     <a href="unit-02.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 2 · 影像感測器基礎</div></a>
     <a class="np-next" href="unit-04.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 4 · 平台相機框架與驅動</div></a>

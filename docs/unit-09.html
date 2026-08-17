@@ -134,6 +134,51 @@
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>9.9 進階真實情境 Worked Example：同一感測器在 Orin vs RPi5 上的 ISP 行為差異</h2>
+<p>場景：你在 OV9281 上做調校，同一顆感測器分別接 Orin Nano 和 RPi5，發現出圖色彩差異極大。</p>
+<div class="demo-block"><div class="demo-label">跨平台 RAW 比較</div><pre><span class="hl-c"># Orin Nano: 用 Argus 取 RAW</span>
+argus_camera --mode 0 --raw-file orin_raw.raw --duration 1
+<span class="hl-c"># RPi5: 用 libcamera 取 RAW</span>
+libcamera-still --raw --nopreview -o rpi_raw.raw
+<span class="hl-c"># 兩邊比對（Python）</span>
+python3 - <<'EOF'
+import numpy as np
+orin = np.fromfile('orin_raw.raw', dtype=np.uint16).reshape(800, 1280)
+rpi = np.fromfile('rpi_raw.raw', dtype=np.uint16).reshape(800, 1280)
+print(f'Orin  mean={orin.mean():.1f} std={orin.std():.1f}')
+print(f'RPi5  mean={rpi.mean():.1f} std={rpi.std():.1f}')
+<span class="hl-c"># 即使同一顆 OV9281，mean 可能差 10-30%</span>
+<span class="hl-c"># 原因：兩平台的 I2C init table 不同 → 感測器 analog gain/exposure 設定不同</span>
+EOF</pre></div>
+<p><strong>設計決策：</strong>差異不在 ISP（ISP 只處理 digital 端），而在<strong>感測器驅動的初始化 register table</strong>。NVIDIA 和 RPi 的驅動對同一顆感測器可能設定不同的 analog gain、digital gain、lane 時序——這些在 ISP 之前就決定了 RAW 的「基礎色調」。</p>
+
+<h2>9.10 深入原理擴充：NVIDIA ISP 的「Hardware Scaler / Cropper」</h2>
+<p>Orin ISP pipeline 中有獨立的 <strong>scaler</strong> 和 <strong>cropper</strong> 硬體區塊，它們在 ISP 之後、輸出之前運作。</p>
+<table>
+<tr><th>區塊</th><th>功能</th><th>與其他平台差異</th></tr>
+<tr><td>Cropper</td><td>硬體級裁切（不需要 CPU）</td><td>RPi5 的 ISP 也有 crop，但 Argus 的 crop 更靈活（可指定 ROI）</td></tr>
+<tr><td>Scaler</td><td>硬體級縮放（雙線性/雙三次）</td><td>NVIDIA scaler 用 GPU 硬體加速，RPi 用 ISP 內建 scaler</td></tr>
+<tr><td>Downscaler limit</td><td>Orin: 最大 1/16 縮放</td><td>RPi5: 最大 1/8 縮放</td></tr>
+</table>
+<div class="callout warn"><strong>陷阱：</strong>「用 Argus 設定 output resolution 時，以為 ISP 會自動縮放」——Argus 預設是「sensor 出什麼尺寸就什麼尺寸」，scaler 只在你明確設定 <code>sensorMode->resolution</code> 時才介入。不設定 scaler → 你拿到的是 sensor 原始尺寸，不是你想要的尺寸。</div>
+
+<h2>9.11 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>同一感測器在 Orin 和 RPi5 上色彩明顯不同</td><td>感測器 init register table 差異（analog gain/exposure 設定不同）</td><td>比對兩平台的 driver init table；固定感測器設定後再比 ISP 差異</td></tr>
+<tr><td>Orin 出圖延遲比 RPi5 高</td><td>Orin ISP pipeline 較長（更多階段）但功能更完整</td><td>用 bypass 模式跳過不需要的 ISP 區塊；或評估 RPi5 是否夠用</td></tr>
+<tr><td>RPi5 的 ISP 調校參數搬到 Orin 後沒有效果</td><td>兩平台 ISP 架構完全不同，參數不互通</td><td>從頭用 Orin 的 tuning tool 做調校</td></tr>
+<tr><td>Orin ISP 在高解析度下佔用大量 GPU 記憶體</td><td>ISP pipeline 的 internal buffer 隨尺寸增大</td><td>降低 ISP 內部緩衝區大小；或分段處理</td></tr>
+<tr><td>RPi5 的 libcamera ISP 調校比 Orin Argus 簡單</td><td>架構差異：libcamera 調校更集中，Argus 更分散</td><td>接受差異：Argus 功能更強但學習曲線更陡</td></tr>
+</table>
+
+<h2>9.12 進階挑戰題</h2>
+<ol>
+<li>畫出 NVIDIA Orin ISP、RPi5 ISP、Qualcomm Spectra ISP 三者的 pipeline 架構比較圖，標出每個平台「有但其他平台沒有」的區塊。</li>
+<li>若你需要將 RPi5 上已調校好的參數「移植」到 Orin Nano，設計一個「翻譯」流程：哪些參數可以直接搬、哪些需要重新量測、哪些需要完全重寫。</li>
+<li>比較 Orin Nano 的 Argus API 與 RPi5 的 libcamera API 在「同一功能」上的呼叫差異（例如：設定曝光時間、取得 RAW）。</li>
+</ol>
+
   <div class="next-prev">
     <a href="unit-08.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 8 · RAW 擷取與資料格式</div></a>
     <a class="np-next" href="unit-10.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 10 · 曝光與自動曝光（AE）</div></a>

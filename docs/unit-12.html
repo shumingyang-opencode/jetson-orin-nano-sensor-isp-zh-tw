@@ -146,6 +146,53 @@ EOF</pre></div>
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>12.9 進階真實情境 Worked Example：OV9281 + 廣角鏡頭的 LSC 校正</h2>
+<p>場景：OV9281 搭配 120° 廣角鏡頭，邊緣失光嚴重（中心亮度是邊緣的 3 倍）。需要做 LSC 校正使全畫面亮度均勻。</p>
+<div class="demo-block"><div class="demo-label">LSC 校正流程</div><pre><span class="hl-c"># 1. 拍均勻白牆（確保光線均勻、無陰影）</span>
+argus_camera --mode 0 --raw-file whitewall.raw --duration 1
+<span class="hl-c"># 2. 分析中心 vs 邊緣亮度比</span>
+python3 - <<'EOF'
+import numpy as np
+raw = np.fromfile('whitewall.raw', dtype=np.uint16).reshape(800, 1280)
+center = raw[300:500, 500:800].mean()
+edge_top = raw[0:100, 500:800].mean()
+edge_left = raw[300:500, 0:200].mean()
+print(f'中心: {center:.0f}, 上邊緣: {edge_top:.0f}, 左邊緣: {edge_left:.0f}')
+print(f'邊緣/中心比: 上={edge_top/center:.2f}, 左={edge_left/center:.2f}')
+EOF
+<span class="hl-c"># 3. 用 NVIDIA tuning tool 產生 LSC 校正表</span>
+<span class="hl-c">#    產生 33×33 的增益表（每個 grid cell 的亮度補償倍數）</span>
+<span class="hl-c"># 4. 載入 Argus ISP</span>
+argus_camera --mode 0 --lsc-file lsc_table.bin --duration 5</pre></div>
+<p><strong>設計決策：</strong>120° 廣角鏡頭的光學特性決定 LSC 必須做——邊緣失光是物理定律（cos⁴ law），不是缺陷。LSC 校正的關鍵是「拍攝條件要均勻」：白牆、正對、無反光。</p>
+
+<h2>12.10 深入原理擴充：LSC 校正表的 grid 結構</h2>
+<p>LSC 校正表把畫面分成 grid（例如 33×33），每個 grid cell 有一個增益值（1.0 = 不調整，&gt;1.0 = 補亮）。</p>
+<table>
+<tr><th>Grid 大小</th><th>精細度</th><th>記憶體</th><th>適用場景</th></tr>
+<tr><td>17×17</td><td>粗</td><td>小</td><td>鏡頭 shading 平滑（簡單鏡頭）</td></tr>
+<tr><td>33×33</td><td>中</td><td>中</td><td>多數工業鏡頭</td></tr>
+<tr><td>65×65</td><td>細</td><td>大</td><td>非對稱 shading（例如側面補光）</td></tr>
+</table>
+<div class="callout warn"><strong>陷阱：</strong>LSC 校正表是「空間域」校正——它根據 pixel 在畫面中的位置補償亮度。若光源不均勻（例如一面牆有陰影），LSC 會「錯誤補償」：把陰影區當作鏡頭 shading 來補亮，導致該區域過曝。</div>
+
+<h2>12.11 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>LSC 校正後邊緣反而更暗</td><td>校正表的增益方向搞反（&lt;1.0 而非 &gt;1.0）</td><td>確認增益表中「邊緣 cell」的值 &gt; 1.0；翻轉表值</td></tr>
+<tr><td>LSC 校正後四角過亮</td><td>校正表過度補償（增益值過大）</td><td>降低邊緣 cell 的增益值；確認拍攝時光線真的均勻</td></tr>
+<tr><td>LSC 校正後中心與邊緣亮度一致但色彩不均</td><td>LSC 只補償亮度，不補償色彩（色溫差異）</td><td>LSC 是 per-channel 校正（RGB 各自獨立）；確認 LSC 校正表是 per-channel</td></tr>
+<tr><td>換鏡頭後 LSC 校正表失效</td><td>不同鏡頭的 shading 特性不同</td><td>每顆鏡頭獨立做 LSC 校正；不可共用</td></tr>
+<tr><td>LSC 校正表在低光下效果差</td><td>低光下雜訊放大，LSC 補亮的同時也放大雜訊</td><td>在低光下降低 LSC 補償上限；或搭配 NR 同時調校</td></tr>
+</table>
+
+<h2>12.12 進階挑戰題</h2>
+<ol>
+<li>為你的 OV9281 + 廣角鏡頭拍攝 LSC 校正圖（白牆），用 Python 計算並視覺化 33×33 的增益表（用 heatmap 顯示）。</li>
+<li>比較「同一顆 OV9281」搭配「標準鏡頭」和「廣角鏡頭」的 LSC 校正表差異，畫出兩者的增益曲線。</li>
+<li>設計一個自動化 LSC 校正流程：腳本自動拍白牆、自動分析、自動生成校正表、自動載入 ISP。</li>
+</ol>
+
   <div class="next-prev">
     <a href="unit-11.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 11 · 白平衡與色彩（AWB/CCM）</div></a>
     <a class="np-next" href="unit-13.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 13 · 雜訊與降噪</div></a>

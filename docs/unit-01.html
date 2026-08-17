@@ -142,6 +142,49 @@ v4l2-ctl --list-devices</pre></div>
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>1.15 進階真實情境 Worked Example：GMSL 四感測器同時串流啟用</h2>
+<p>場景：自駕小車需要同時使用前（OV9281）、後（OV9281）、左（IMX219）、右（IMX219）四顆感測器。前後走 GMSL 同軸線（15m），左右走 CSI 排線（短距）。</p>
+<div class="demo-block"><div class="demo-label">四路同時啟用工作流</div><pre><span class="hl-c"># 1. 確認 MAX96712 四路 link 全部 lock</span>
+i2cget -y 0 0x48 0x13   <span class="hl-c"># link0 lock bit</span>
+i2cget -y 0 0x48 0x14   <span class="hl-c"># link1 lock bit</span>
+<span class="hl-c"># 2. 確認 DTB 四個 camera 節點（含 lane/VC 分配）</span>
+dtc -I dtb -O dts -o /dev/stdout /boot/dtb/nv.dtb | grep -A20 "camera"
+<span class="hl-c"># 3. 逐路出圖驗證</span>
+v4l2-ctl -d /dev/video0 --stream-mmap=1 --stream-count=1 --stream-to=front.raw
+v4l2-ctl -d /dev/video1 --stream-mmap=1 --stream-count=1 --stream-to=rear.raw
+v4l2-ctl -d /dev/video2 --stream-mmap=1 --stream-count=1 --stream-to=left.raw
+v4l2-ctl -d /dev/video3 --stream-mmap=1 --stream-count=1 --stream-to=right.raw
+<span class="hl-c"># 4. 用 Argus 同時開四路（確認 ISP pipeline 資源夠用）</span>
+argus_camera --camera 0,1,2,3 --mode 0 --duration 5</pre></div>
+<p><strong>設計決策：</strong>GMSL 路走 OV9281（global shutter，遠距低延遲）；CSI 短距走 IMX219（色彩較好，近距安裝）。四路共用 ISP pipeline 時要注意：Orin Nano 的 ISP bandwidth 有限，若四路全開高解析度會撞上限，需降單路解析度或 binning。</p>
+
+<h2>1.16 深入原理擴充：VI channel 與 Orin ISP 資源模型</h2>
+<p>Orin Nano 的影像擷取子系統（VI）有多個 <strong>channel</strong>，每個 channel 對應一個 /dev/videoN。VI channel 數量是硬體限制（Orin Nano 最多 3 個 VI channel），不是「介面夠不夠」的問題。</p>
+<table>
+<tr><th>概念</th><th>說明</th><th>陷阱</th></tr>
+<tr><td>VI channel</td><td>硬體擷取通道數上限</td><td>超出 → 某路無法開，但 dmesg 可能只報「resource busy」</td></tr>
+<tr><td>CSI 介面</td><td>物理連接數</td><td>CSI 介面多不代表 VI channel 多，DTB 中的 port 節點要對齊</td></tr>
+<tr><td>ISP instance</td><td>NVIDIA ISP 一次可處理的 pipeline 數</td><td>多路同時走 ISP 時可能降速（bandwidth sharing）</td></tr>
+</table>
+<div class="callout warn"><strong>大家以為沒問題但其實是陷阱：</strong>「DTB 宣告了四顆 camera，dmesg 都 probe 成功，但 argus 只能同時開三路」——原因不是驅動壞了，而是 VI channel 用盡。第四路需要走 bypass（不做 ISP 直接送 V4L2），或降單路解析度釋放 ISP 資源。</div>
+
+<h2>1.17 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>argus_camera 回傳錯誤 code 但 v4l2-ctl 正常</td><td>Argus 要求 ISP 但資源不足（VI channel 佔滿）</td><td>先用 v4l2-ctl 確認幾路可用，再決定 Argus 同時開幾路</td></tr>
+<tr><td>GMSL 模組上電後 dmesg 完全無感測器 probe 訊息</td><td>deserializer I2C alias 未設定 或 DTB 缺少 serdes 節點</td><td>檢查 DTB 的 i2c-mux / alias 節點；用 i2cdetect 掃描 deserializer 位址</td></tr>
+<tr><td>多路同時串流時其中一路掉幀</td><td>CSI 頻寬不足或 VI channel bandwidth 分配不均</td><td>計算總頻寬（參照 1.13）；降低其他路的解析度或幀率</td></tr>
+<tr><td>argus 出圖全黑但 v4l2-ctl 出圖正常</td><td>Argus 設定了錯誤的 output format（要求 YUV 但 ISP 未啟動）</td><td>確認 Argus 的 output format 與 ISP pipeline 設定一致；用 nvarguscamerasrc 指定正確 format</td></tr>
+<tr><td>感測器 I2C 讀得到 ID 但出圖色彩全錯</td><td>DTB 中 lane assignment 或 virtual channel 設定與實際接線不符</td><td>用 media-ctl -p 確認拓撲；比對 DTB lane 編號與實體排線</td></tr>
+</table>
+
+<h2>1.18 進階挑戰題</h2>
+<ol>
+<li>若你需要在 Orin Nano 上同時接 5 顆感測器（超過 VI channel 上限），設計一個「硬體 + 軟體」方案使 5 路都能出圖（提示：考慮 VI channel 限制、bypass 模式、外部 ISP）。</li>
+<li>畫出你的 GMSL 多感測器系統的完整 I2C 拓撲圖：哪些位址是 serializer、哪些是 deserializer、哪些是感測器本身？標出每個 remap 的邏輯位址。</li>
+<li>撰寫一個 bash script，自動化驗證 Orin Nano 上所有 `/dev/videoN` 是否都能正常串流，並輸出每路的「通過/失敗 + 幀數」。</li>
+</ol>
+
   <div class="next-prev">
     <a href="index.html"><div class="np-label">← 上一層</div><div class="np-name">單元教學目錄</div></a>
     <a class="np-next" href="unit-02.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 2 · 影像感測器基礎</div></a>

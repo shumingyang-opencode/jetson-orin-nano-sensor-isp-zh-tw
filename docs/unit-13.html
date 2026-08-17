@@ -163,6 +163,57 @@ done
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>13.12 進階真實情境 Worked Example：OV9281 在低光下的 NR 與細節平衡</h2>
+<p>場景：OV9281 在昏暗工廠環境（~50 lux）下做缺陷檢測。降噪太強會抹掉缺陷細節，降噪太弱雜訊淹沒信號。</p>
+<div class="demo-block"><div class="demo-label">NR 參數調校實驗</div><pre><span class="hl-c"># 1. 固定曝光（排除 AE 干擾）</span>
+argus_camera --mode 0 --ae-manual --exposure-time 20000 --gain 4.0
+<span class="hl-c"># 2. 關閉所有 NR，拍 baseline</span>
+argus_camera --mode 0 --nr-off --duration 2 --raw-file baseline.raw
+<span class="hl-c"># 3. 逐步開啟 2D NR，觀察 SNR 改善</span>
+for level in 1 2 3 4 5; do
+  argus_camera --mode 0 --nr-2d $level --duration 2 --raw-file nr2d_L${level}.raw
+done
+<span class="hl-c"># 4. 在 baseline 上分析 SNR</span>
+python3 - <<'EOF'
+import numpy as np
+raw = np.fromfile('baseline.raw', dtype=np.uint16).reshape(800, 1280)
+flat = raw[300:500, 500:800]
+print(f'Baseline SNR: {20*np.log10(flat.mean()/flat.std()):.1f} dB')
+for level in range(1, 6):
+    nr = np.fromfile(f'nr2d_L{level}.raw', dtype=np.uint16).reshape(800, 1280)
+    nf = nr[300:500, 500:800]
+    print(f'NR 2D level {level}: SNR={20*np.log10(nf.mean()/nf.std()):.1f} dB, σ={nf.std():.1f}')
+EOF
+<span class="hl-c"># 找到 SNR 改善最大但 σ 仍然合理的 level</span></pre></div>
+<p><strong>設計決策：</strong>2D NR 處理空間雜訊（同幀內的 spatial noise），3D NR 處理時間雜訊（跨幀 temporal noise）。低光場景先開 2D NR，若畫面有動態再開 3D NR。NR level 選擇的原則：<strong>SNR 提升 ≥ 3dB 且缺陷細節不模糊</strong>。</p>
+
+<h2>13.13 深入原理擴充：NR 對 DPC（缺陷像素校正）的影響</h2>
+<p>NR 和 DPC 有交互作用：NR 會「模糊」缺陷像素的特徵，使 DPC 更難偵測。</p>
+<table>
+<tr><th>處理順序</th><th>效果</th><th>建議</th></tr>
+<tr><td>DPC → NR</td><td>先修缺陷再降噪（推薦）</td><td>DPC 能清楚看到缺陷位置</td></tr>
+<tr><td>NR → DPC</td><td>NR 模糊了缺陷，DPC 漏檢</td><td>避免此順序</td></tr>
+<tr><td>DPC + NR 同時</td><td>取決於 ISP 內部 pipeline 順序</td><td>確認 Argus 的 pipeline 順序（DPC 通常在 NR 之前）</td></tr>
+</table>
+<div class="callout warn"><strong>陷阱：</strong>「NR 開到最大就好」——NR 過強會把缺陷像素「抹平」，DPC 完全偵測不到，結果缺陷留在最終影像中（只是變模糊了）。先做 DPC，再做 NR。</div>
+
+<h2>13.14 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>NR 開啟後缺陷更明顯（而非消失）</td><td>DPC 在 NR 之後處理（pipeline 順序錯）</td><td>確認 Argus pipeline：DPC 應在 NR 之前；調整 pipeline 順序</td></tr>
+<tr><td>NR 過強導致邊緣模糊</td><td>2D NR 的 spatial kernel 太大</td><td>降低 2D NR level；或只對低頻區域開 NR（edge-aware NR）</td></tr>
+<tr><td>3D NR 在快速運動時產生殘影</td><td>3D NR 的 temporal kernel 跨幀對齊失敗</td><td>在有運動的場景關閉 3D NR；或降低 temporal 強度</td></tr>
+<tr><td>NR 在低光下幾乎無效</td><td>雜訊太大，NR 的 threshold 被超過</td><td>先提高 analog gain 以下的信號（降低 gain + 延長曝光）</td></tr>
+<tr><td>NR 開啟後色彩偏移</td><td>NR 對 R/G/B 通道的處理不均</td><td>確認 NR 是 per-channel 處理；或在 RGB 空間做 NR 而非 YUV</td></tr>
+</table>
+
+<h2>13.15 進階挑戰題</h2>
+<ol>
+<li>在 OV9281 上做「NR level vs SNR」的系統化測試：固定曝光，從 NR level 0 到最大，每級拍一幀，畫出 SNR 曲線。找到「拐點」（SNR 提升趨緩的 level）。</li>
+<li>設計一個「DPC + NR 調校」流程：先做 DPC（找到所有缺陷像素），再做 NR（降雜訊），確保兩者不互相干擾。</li>
+<li>比較 2D NR 和 3D NR 在「靜態場景」和「動態場景」下的效果差異，寫出你的結論和建議的使用場景。</li>
+</ol>
+
   <div class="next-prev">
     <a href="unit-12.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 12 · 鏡頭陰影校正（LSC）</div></a>
     <a class="np-next" href="unit-14.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 14 · 清晰度、動態範圍與調校工作流</div></a>

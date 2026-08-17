@@ -162,6 +162,58 @@ argus_camera --mode 0 --capture-auto 1 --duration 1</pre></div>
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>6.14 進階真實情境 Worked Example：GMSL 模組的完整 bring-up 除錯</h2>
+<p>場景：新的 GMSL 模組（MAX96712 + OV9281）接上 Orin Nano 後，dmesg 沒有任何感測器 probe 訊息。你需要從零開始除錯。</p>
+<div class="demo-block"><div class="demo-label">系統化 bring-up 除錯流程</div><pre><span class="hl-c"># Phase 1: 硬體層</span>
+<span class="hl-c"># 1a. 確認 deserializer 有電（量 MAX96712 VCC 引腳）</span>
+<span class="hl-c"># 1b. 確認 I2C 匯流排可用</span>
+i2cdetect -y 0 | grep -E "48|36"
+<span class="hl-c"># 期望看到 0x48（MAX96712）和 0x36（OV9281 remap）</span>
+<span class="hl-c"># 1c. 若只看到 0x48：link 可能沒 lock</span>
+i2cget -y 0 0x48 0x0013  <span class="hl-c"># 讀 link0 lock bit</span>
+
+<span class="hl-c"># Phase 2: 驅動層</span>
+<span class="hl-c"># 2a. 檢查 dmesg 有無 max96712 或 ov9281 相關訊息</span>
+dmesg | grep -i -E "max96712|ov9281|tegra-camera"
+<span class="hl-c"># 2b. 若出現 "i2c: slave addressed but no driver" → DTB overlay 未載入</span>
+<span class="hl-c"># 2c. 檢查模組是否編譯進 kernel</span>
+lsmod | grep -i "max96712\|ov9281"
+
+<span class="hl-c"># Phase 3: 出圖層</span>
+<span class="hl-c"># 3a. 確認 /dev/videoN 存在</span>
+ls /dev/video*
+<span class="hl-c"># 3b. 用 v4l2-ctl 嘗試取幀</span>
+v4l2-ctl -d /dev/video0 --stream-mmap=1 --stream-count=1 --stream-to=test.raw</pre></div>
+<p><strong>設計決策：</strong>除錯永遠從「最底層」往上走：硬體（電源/連接）→ I2C（通訊）→ 驅動（probe）→ 出圖（串流）。很多人從「出圖失敗」開始猜，浪費時間。</p>
+
+<h2>6.15 深入原理擴充：Register Dump 的正確方法</h2>
+<p>「dump 所有 register」是常見的除錯手法，但<strong>方法錯誤會導致感測器狀態改變</strong>。</p>
+<table>
+<tr><th>方法</th><th>風險</th><th>正確做法</th></tr>
+<tr><td>i2cget 逐 register 讀</td><td>低風險（唯讀）</td><td>用迴圈讀指定範圍（如 0x0000-0x01FF）</td></tr>
+<tr><td>i2cget 同時讀+寫（測試功能）</td><td>中風險（可能觸發 reset）</td><td>先備份值，改完後恢復</td></tr>
+<tr><td>透過 GMSL tunnel 讀</td><td>高風險（tunnel 延遲 + 超時）</td><td>降低 I2C 時脈；用 vendor 工具（較穩定）</td></tr>
+<tr><td>kernel 調試（dev_dbg）</td><td>低風險</td><td>在驅動的 probe 函數中加入 dev_dbg 輸出</td></tr>
+</table>
+<div class="callout warn"><strong>陷阱：</strong>「讀 register 0x3000~0x30FF 看初始化是否成功」——某些 register 是 write-only 的（例如 OV9281 的 streaming control register），read 回來可能是 0x00，不代表沒設定成功。</div>
+
+<h2>6.16 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>i2cdetect 顯示所有位址都是 0x00（bus 沒反應）</td><td>I2C 匯流排 SDA/SCL 被拉低（短路 或 某裝置 hang）</td><td>斷電後量 SDA/SCL 對地電阻；逐顆拔除裝置找出問題源</td></tr>
+<tr><td>dmesg 有 "probe failed: -12"（ENOMEM）</td><td>kernel 記憶體不足（太多 overlay 或 module）</td><td>減少不必要的 DTB overlay；檢查是否有記憶體洩漏的 module</td></tr>
+<tr><td>感測器 probe 成功但 v4l2-ctl 出圖全黑</td><td>streaming 尚未啟用（需先設定 streaming register）</td><td>確認 OV9281 的 streaming control register（0x0100）已設為 1</td></tr>
+<tr><td>GMSL 模組在冷開機時正常，熱開機後找不到</td><td>serializer/deserializer 在 reset 後未重新初始化</td><td>在 DTB 中設定 GPIO reset 時序；或在驅動中加入 re-init 邏輯</td></tr>
+<tr><td>dmesg 出現 " tegra-camera-rtcpu: firmware not ready"</td><td>RTCPU firmware 損壞 或 版本不匹配</td><td>重新刷入 JetPack（確保 firmware 與 kernel 版本一致）</td></tr>
+</table>
+
+<h2>6.17 進階挑戰題</h2>
+<ol>
+<li>撰寫一個「三階段 bring-up 自動化腳本」：Phase 1 檢查 I2C 硬體、Phase 2 檢查驅動 probe、Phase 3 嘗試串流。每階段失敗時自動輸出建議的下一步。</li>
+<li>設計一個 register dump + diff 的方法：先 dump 正常工作時的 register 值，再 dump 異常時的值，自動比對差異並標記可疑 register。</li>
+<li>若你的 GMSL 系統在「高溫環境」下偶爾 probe 失敗，設計一個溫度-成功率的測試方案。</li>
+</ol>
+
   <div class="next-prev">
     <a href="unit-05.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 5 · 第一個鏡頭跑起來</div></a>
     <a class="np-next" href="unit-07.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 7 · ISP 管線深入</div></a>

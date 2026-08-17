@@ -153,6 +153,57 @@ LSC tables              → NVIDIA 工具生成網格
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>15.9 進階真實情境 Worked Example：跨平台「同一功能」的實作差異</h2>
+<p>場景：你需要在四個平台上都做到「從 sensor 取 RAW → ISP 處理 → 顯示」，比較每個平台的實作複雜度。</p>
+<div class="demo-block"><div class="demo-label">四平台的「出圖」指令比較</div><pre><span class="hl-c"># === Orin Nano ===</span>
+argus_camera --mode 0 --capture-auto 1 --duration 1
+<span class="hl-c"># 優點：Argus 自動管理 ISP pipeline</span>
+<span class="hl-c"># 缺點：API 較複雜（需 libargus）</span>
+
+<span class="hl-c"># === RPi5 ===</span>
+libcamera-still --nopreview -o rpi.jpg
+<span class="hl-c"># 優點：libcamera 簡單一行搞定</span>
+<span class="hl-c"># 缺點：調校參數需改 YAML 配置檔</span>
+
+<span class="hl-c"># === Qualcomm (如果有) ===</span>
+<span class="hl-c"># vendor SDK（非公開），需要 QCOM 相權限</span>
+<span class="hl-c"># 優點：ISP 性能強</span>
+<span class="hl-c"># 缺點：封閉，不公開 API</span>
+
+<span class="hl-c"># === STM32MPU ===</span>
+<span class="hl-c"># GStreamer + ISP plugin</span>
+gst-launch-1.0 v4l2src device=/dev/video0 ! videoconvert ! autovideosink
+<span class="hl-c"># 優點：標準 Linux 生態</span>
+<span class="hl-c"># 缺點：ISP 功能有限</span></pre></div>
+<p><strong>設計決策：</strong>從「出圖到顯示」的指令複雜度：RPi5 最簡單 → Orin Nano 中等 → STM32 需手動設定 → Qualcomm 需要 vendor SDK。但「調校深度」正好相反：Qualcomm 最深 → Orin Nano 次深 → RPi5 中等 → STM32 最淺。</p>
+
+<h2>15.10 深入原理擴充：四平台的 ISP 調校工具比較</h2>
+<table>
+<tr><th>平台</th><th>調校工具</th><th>調校方式</th><th>特色</th></tr>
+<tr><td>Orin Nano</td><td>NVIDIA ISP Tuning Tool + Argus</td><td>GUI + script</td><td>可視化 histogram/ waveform；參數可匯出為 .bin</td></tr>
+<tr><td>RPi5</td><td>libcamera YAML 配置 + tuning tool</td><td>純文字配置</td><td>open source；可即時重載</td></tr>
+<tr><td>Qualcomm</td><td>Chi-CDK / ISP Tuning Tool</td><td>GUI + vendor SDK</td><td>功能最完整但封閉</td></tr>
+<tr><td>STM32MPU</td><td>GStreamer pipeline + 手動 register</td><td>手動為主</td><td>ISP 功能最少；調校空間有限</td></tr>
+</table>
+<div class="callout warn"><strong>大家以為沒問題但其實是陷阱：</strong>「RPi5 的調校參數可以搬到 Orin Nano」——不行。兩者的 ISP 架構完全不同（libargus vs libcamera），參數格式、pipeline 順序、支援的功能都不一樣。搬到另一個平台需要「重新量測 + 重新調校」。</div>
+
+<h2>15.11 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>從 RPi5 搬參數到 Orin 後色彩全錯</td><td>參數格式/含義不同（例如 CCM 矩陣的排列方式不同）</td><td>不要搬參數。用 Orin 的 tuning tool 重新計算</td></tr>
+<tr><td>Orin Argus 比 RPi5 libcamera 延遲高</td><td>Argus pipeline 較長（更多 ISP 區塊）</td><td>用 bypass 模式跳過不需要的區塊；或評估 RPi5 是否夠用</td></tr>
+<tr><td>STM32 ISP 調校效果不如預期</td><td>STM32 ISP 功能有限（無 LSC/AWB 自動化）</td><td>接受限制；或外接 ISP 模組</td></tr>
+<tr><td>Qualcomm 的 ISP 性能最好但無法客製</td><td>Qualcomm ISP 是封閉的硬體加速器</td><td>接受限制；在 Qualcomm SDK 允許的範圍內調校</td></tr>
+<tr><td>跨平台測試時「同一感測器」表現不同</td><td>感測器 init table 不同（各平台驅動設定不同）</td><td>固定感測器 init table（同一份 I2C 初始化 sequence）再比 ISP</td></tr>
+</table>
+
+<h2>15.12 進階挑戰題</h2>
+<ol>
+<li>為你的專案做一個「平台選型決策矩陣」：列出行列（功能 × 平台），評分每個平台在該功能上的表現（1-5 分）。</li>
+<li>若你需要將一個已調校好的影像系統從 Orin Nano 移植到 RPi5，寫出一份「移植 checklist」：哪些東西可以直接搬、哪些需要重寫、哪些需要重新量測。</li>
+<li>比較四個平台的「調校學習曲線」：從「零經驗」到「能獨立完成調校」，每個平台大概需要多少時間和資源？</li>
+</ol>
+
   <div class="next-prev">
     <a href="unit-14.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 14 · 清晰度、動態範圍與調校工作流</div></a>
     <a class="np-next" href="unit-16.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 16 · 多感測器與實作案例</div></a>

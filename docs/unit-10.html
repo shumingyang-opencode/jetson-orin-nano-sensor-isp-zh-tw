@@ -151,6 +151,50 @@ bright = mean(全開)    # 目標近半飽和
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>10.10 進階真實情境 Worked Example：OV9281 在工業場景的 AE 收斂策略</h2>
+<p>場景：OV9281 裝在傳送帶上方做缺陷檢測，光源固定但產品表面反射率差異大（亮白色金屬 vs 暗色橡膠）。AE 需要在不同產品間快速收斂。</p>
+<div class="demo-block"><div class="demo-label">Argus AE 參數調校</div><pre><span class="hl-c"># 1. 設定 AE 為手動模式（固定曝光）</span>
+argus_camera --mode 0 --ae-manual --exposure-time 10000 --gain 1.0
+<span class="hl-c"># 2. 觀察不同產品的亮度</span>
+<span class="hl-c">#    亮色金屬：histogram 偏右 → 可能過曝</span>
+<span class="hl-c">#    暗色橡膠：histogram 偏左 → 可能欠曝</span>
+<span class="hl-c"># 3. 改用 auto exposure，設定收斂範圍</span>
+argus_camera --mode 0 --ae-auto \
+  --ae-convergence-speed fast \
+  --ae-target-brightness 128 \
+  --ae-min-exposure 1000 \
+  --ae-max-exposure 33000
+<span class="hl-c"># target-brightness=128：AE 試圖讓平均亮度到 128/255</span>
+<span class="hl-c"># convergence-speed=fast：快速跟上產品變化</span></pre></div>
+<p><strong>設計決策：</strong>工業場景的 AE 與一般監控不同——產品每幾秒換一種，AE 需要「快速收斂但不震盪」。Argus 的 <code>convergence-speed</code> 控制 PID 控制器的 response time。</p>
+
+<h2>2.11 深入原理擴充：Argus AE 的 PID 控制器內部</h2>
+<p>Argus AE 的核心是一個 <strong>PID（比例-積分-微分）控制器</strong>，它根據 histogram 的亮度分佈調整曝光時間和 gain。</p>
+<table>
+<tr><th>PID 參數</th><th>功能</th><th>過大的效果</th></tr>
+<tr><td>P（比例）</td><td>亮度偏離目標時的反應速度</td><td>曝光值震盪（over/under shoot）</td></tr>
+<tr><td>I（積分）</td><td>消除長期偏差</td><td>收斂變慢（因為「等待」積分累積）</td></tr>
+<tr><td>D（微分）</td><td>抑制震盪</td><td>反應遲鈍（過度抑制變化）</td></tr>
+</table>
+<div class="callout warn"><strong>陷阱：</strong>「ae-convergence-speed 設 fast 就一定好」——fast 模式下 P 值較大，在「高對比場景」（例如畫面同時有很亮和很暗區域）會造成曝光值劇烈震盪，畫面忽明忽暗。這時反而需要 medium 或 slow。</div>
+
+<h2>10.11 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>AE 開啟後畫面忽明忽暗（震盪）</td><td>convergence-speed 太快 或 target-brightness 不合理</td><td>降低 convergence-speed；確認 target-brightness 在 100-150 範圍</td></tr>
+<tr><td>AE 在低光下無法收斂（永遠拉長曝光）</td><td>max-exposure-time 設太低 或 sensor 幀率限制</td><td>提高 max-exposure-time；降低 fps 以允許更長曝光</td></tr>
+<tr><td>AE 在高光下過曝（histogram 爆掉）</td><td>min-exposure-time 設太高 或 gain 未降</td><td>降低 min-exposure-time 到 sensor 支援下限</td></tr>
+<tr><td>手動設定曝光後畫面比 auto 更暗</td><td>手動曝光值低於 auto 的收斂目標</td><td>用手動模式測出「正確曝光」的參數，再切回 auto 作為參考</td></tr>
+<tr><td>AE 在室內/室外切換時需要很長時間收斂</td><td>I 參數過大（積分太慢消除偏差）</td><td>在已知場景切換點，用 event trigger 強制 reset AE</td></tr>
+</table>
+
+<h2>10.12 進階挑戰題</h2>
+<ol>
+<li>用 Argus 手動設定不同的曝光時間 + gain 組合，畫出 OV9281 的「亮度-曝光時間」關係圖（含不同 gain 值的曲線族）。</li>
+<li>設計一個「AE 收斂時間測試」：在已知的明暗切換點（例如用 LED 燈開/關），計時 AE 從一個亮度目標到另一個目標的收斂時間。</li>
+<li>若你的場景有「週期性亮度變化」（例如旋轉物體的反光），設計一個 AE 策略使畫面亮度保持穩定（提示：考慮 AE 的 response time 與週期的關係）。</li>
+</ol>
+
   <div class="next-prev">
     <a href="unit-09.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 9 · 各平台 ISP 架構差異</div></a>
     <a class="np-next" href="unit-11.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 11 · 白平衡與色彩（AWB/CCM）</div></a>

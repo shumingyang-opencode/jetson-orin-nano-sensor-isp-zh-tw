@@ -166,6 +166,61 @@ v4l2-ctl -d /dev/video1 --stream-mmap=10 --stream-count=10 --stream-to=c1.raw
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>16.16 進階真實情境 Worked Example：四顆感測器的同步 ISP pipeline 設計</h2>
+<p>場景：自駕小車需要四顆 OV9281 同時工作，每顆走獨立 ISP pipeline，最終四路 NV12 同時送到 AI 推論引擎。</p>
+<div class="demo-block"><div class="demo-label">四路同步 ISP pipeline</div><pre><span class="hl-c"># 四路各走獨立 Argus pipeline</span>
+<span class="hl-c"># Pipeline 0: OV9281 front  → ISP → NV12 stream 0 → /dev/video0</span>
+<span class="hl-c"># Pipeline 1: OV9281 rear   → ISP → NV12 stream 1 → /dev/video1</span>
+<span class="hl-c"># Pipeline 2: OV9281 left   → ISP → NV12 stream 2 → /dev/video2</span>
+<span class="hl-c"># Pipeline 3: OV9281 right  → ISP → NV12 stream 3 → /dev/video3</span>
+
+<span class="hl-c"># 關鍵：每路 ISP 的參數獨立（各感測器的 LSC/AWB 各自校正）</span>
+<span class="hl-c"># 用 Argus session 管理四路：一個 session 四個 stream</span>
+
+<span class="hl-c"># 驗證同步性</span>
+python3 - <<'EOF'
+import time, subprocess
+results = {}
+for cam in range(4):
+    start = time.time()
+    subprocess.run(['v4l2-ctl', f'-d /dev/video{cam}',
+                    '--stream-mmap=1', '--stream-count=1',
+                    f'--stream-to=cam{cam}.raw'])
+    results[cam] = time.time() - start
+print('各路擷取時間：', results)
+diff = max(results.values()) - min(results.values())
+print(f'最大時間差：{diff*1000:.1f} ms')
+<span class="hl-c"># &lt; 1ms → 同步良好；&gt; 5ms → 需要硬體 frame sync</span>
+EOF</pre></div>
+<p><strong>設計決策：</strong>四路獨立 ISP 的好處是「互不干擾」——某路掉幀不影響其他路。壞處是 ISP bandwidth 需要四倍，Orin Nano 可能需要降單路解析度以確保四路同時穩定。</p>
+
+<h2>16.17 深入原理擴充：GMSL 的 Frame Sync 硬體機制</h2>
+<p>MAX96712 支援 <strong>Frame Sync</strong>：透過 GPIO 觸發多顆 serializer 同時開始曝光。</p>
+<table>
+<tr><th>同步方式</th><th>精度</th><th>實作複雜度</th><th>適用場景</th></tr>
+<tr><td>硬體 frame sync</td><td>μs 級</td><td>高（需要額外 GPIO 接線）</td><td>3D 立體視覺、高速拼接</td></tr>
+<tr><td>軟體 timestamp 對齊</td><td>ms 級</td><td>低（只需比對 V4L2 時間戳）</td><td>多視角監控、非即時拼接</td></tr>
+<tr><td>外部 trigger（PWM）</td><td>μs 級</td><td>中（需要 PWM 控制器）</td><td>工業線掃描、頻閃照明</td></tr>
+</table>
+<div class="callout warn"><strong>陷阱：</strong>「硬體 frame sync 設了就一定能同步」——frame sync 只同步「開始曝光」的時間，不保證「讀出完成」的時間。若兩顆感測器的 readout speed 不同，最終的幀完成時間仍然有偏移。</div>
+
+<h2>16.18 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>四路同時串流時某路偶爾掉幀</td><td>ISP bandwidth 超限（四路同時處理）</td><td>降低單路解析度或幀率；確認 ISP 資源分配</td></tr>
+<tr><td>硬體 frame sync 設了但兩路仍有 ms 級偏移</td><td>serializer 的 readout delay 不同</td><td>用同一型號 serializer；或用外部 trigger 統一時序</td></tr>
+<tr><td>多顆同型感測器的色彩偏差不一致</td><td>每顆感測器的個體差異（Bayer response 不同）</td><td>每顆獨立做 AWB/CCM 校正；不可共用參數</td></tr>
+<tr><td>GMSL link 偶爾掉 link（lock 閃爍）</td><td>線材接頭鬆動 或 EMI 干擾</td><td>重新固定接頭；用遮蔽更好的同軸線；降低 GMSL link 速率</td></tr>
+<tr><td>多路同時開時 CPU 佔用飆高</td><td>V4L2 的 mmap buffer 管理消耗 CPU</td><td>用 dmabuf 而非 mmap；或用 NVIDIA 的 hardware buffer（NVMM）</td></tr>
+</table>
+
+<h2>16.19 進階挑戰題</h2>
+<ol>
+<li>設計一個「四路感測器健康監控」dashboard：即時顯示每路的 lock 狀態、幀率、掉幀數、ISP bandwidth 佔用。</li>
+<li>若你需要做「四路拼接成 360° 環景」，設計一個完整的 pipeline：感測器 → ISP → 軟體拼接 → 輸出。標出每步的格式和延遲。</li>
+<li>撰寫一個「多感測器壓力測試」腳本：同時開四路，持續運行 1 小時，記錄每路的掉幀數、CPU/記憶體使用量、溫度。找出穩定性瓶頸。</li>
+</ol>
+
   <div class="next-prev">
     <a href="unit-15.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 15 · 四平台影像調校功能比較</div></a>
     <a class="np-next" href="index.html"><div class="np-label">課程完成 →</div><div class="np-name">回首頁 · 單元教學目錄</div></a>

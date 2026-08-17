@@ -148,6 +148,73 @@ v4l2-ctl -d /dev/video0 --stream-mmap=1 --stream-count=1 --stream-to=t.raw</pre>
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>4.12 進階真實情境 Worked Example：從零建立客製感測器的 DTB overlay</h2>
+<p>場景：你有一顆非標準的 OmniVision 感測器（例如 OV2775），官方 DTB 沒有支援。你需要從 datasheet 出發，建立完整的 DTB overlay。</p>
+<div class="demo-block"><div class="demo-label">DTB overlay 建立流程</div><pre><span class="hl-c"># 1. 從感測器 datasheet 取得：I2C 位址、lane 數、init register table</span>
+<span class="hl-c"># 2. 在 NVIDIA jetson-camera module 驅動目錄新增 OV2775 driver</span>
+<span class="hl-c"># 3. 建立 DT overlay（.dts）</span>
+cat &gt; ov2775-overlay.dts &lt;&lt;'EOF'
+/dts-v1/;
+/plugin/;
+/ {
+    overlay-name = "ov2775 camera";
+    fragment@0 {
+        target = &lt;&csi_i2c&gt;;
+        __overlay__ {
+            ov2775@10 {
+                compatible = "ovti,ov2775";
+                reg = &lt;0x10&gt;;
+                clocks = &lt;&clk_ext_cam 24000000&gt;;
+                clock-frequency = &lt;24000000&gt;;
+                reset-gpios = &lt;&gpio 100 0&gt;;
+                port {
+                    ov2775_out: endpoint {
+                        remote-endpoint = &lt;&csi_in&gt;;
+                        data-lanes = &lt;1 2&gt;;
+                        clock-lanes = &lt;0&gt;;
+                        link-frequencies = /bits/ 64 &lt;360000000&gt;;
+                    };
+                };
+            };
+        };
+    };
+};
+EOF
+<span class="hl-c"># 4. 編譯 overlay</span>
+dtc -@ -I dtb -O dtb -o ov2775.dtbo ov2775-overlay.dts
+<span class="hl-c"># 5. 套用</span>
+sudo cp ov2775.dtbo /boot/dtb/overlays/
+sudo reboot</pre></div>
+<p><strong>設計決策：</strong>DTB overlay 是「可插拔」的——不動原始 DTB，只在開機時動態加入。這讓同一張板子能支援不同感測器，只要切換 overlay 檔案。</p>
+
+<h2>4.13 深入原理擴充：tegracam 框架的 probe 鏈路</h2>
+<p>tegracam 是 NVIDIA 對 V4L2 subdev 框架的擴充。probe 鏈路：DTB 解析 → I2C client 匹配 → 驅動 probe → media entity 註冊 → /dev/videoN 產生。</p>
+<table>
+<tr><th>階段</th><th>驅動動作</th><th>除錯工具</th></tr>
+<tr><td>DTB 解析</td><td>kernel 讀取 overlay，建立 i2c_client</td><td>dtc -I dtb -O dts 檢查</td></tr>
+<tr><td>I2C 匹配</td><td>compatible string 匹配驅動</td><td>dmesg | grep probe</td></tr>
+<tr><td>media 註冊</td><td>tegracam_device_register → 建立 entity graph</td><td>media-ctl -p</td></tr>
+<tr><td>video device</td><td>vb2 queue 建立 → /dev/videoN</td><td>v4l2-ctl --list-devices</td></tr>
+</table>
+<div class="callout warn"><strong>陷阱：</strong>「DTB 正確 + I2C probe 成功」不代表一切正常——media pipeline 可能沒接好。例如：DTB 宣告了 2 lane 但實體只接了 1 lane，probe 不會失敗（I2C 通就好），但出圖時 CSI 收不到資料。</div>
+
+<h2>4.14 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>dmesg 有 probe 成功但 /dev/videoN 不存在</td><td>media entity 未正確註冊 或 vb2 queue 建立失敗</td><td>media-ctl -p 檢查 pipeline；確認驅動中 v4l2_device_register 呼叫</td></tr>
+<tr><td>DTB overlay 套用後 dmesg 出現 "of_device_alloc failed"</td><td>overlay 中某屬性值超出 kernel 限制（例如 clock-frequency 過大）</td><td>簡化 overlay 屬性；逐一註釋定位問題屬性</td></tr>
+<tr><td>多個 DTB overlay 同時套用時衝突</td><td>兩個 overlay 修改了同一個節點的同一個屬性</td><td>確保每個 overlay 針對不同節點；或合併為單一 overlay</td></tr>
+<tr><td>感測器驅動 probe 時 "camera module not detected"</td><td>I2C 匯流排未初始化 或 感測器 reset pin 狀態不對</td><td>檢查 DTB 中 reset-gpios 和 clocks 節點；用示波器量 reset pin 時序</td></tr>
+<tr><td>overlay 套用後需要重開機才生效</td><td>部分 overlay 不支持 hot-plug（DTB 載入時序限制）</td><td>確認 overlay 是否標記為 "reboot required"；用 dtoverlay 動態套用測試</td></tr>
+</table>
+
+<h2>4.15 進階挑戰題</h2>
+<ol>
+<li>為一顆你手邊的感測器（或假設 OV2775）撰寫完整的 DT overlay，包含：I2C 節點、clock、reset、port/endpoint。用 dtc 驗證語法正確。</li>
+<li>畫出 tegracam probe 鏈路的流程圖：從「開機讀取 DTB」到「/dev/videoN 產生」的每一步，標出每步可能失敗的原因。</li>
+<li>若你的 DTB overlay 套用後 dmesg 出現 "Unable to match" 錯誤，設計一個系統化的排查流程找出根本原因。</li>
+</ol>
+
   <div class="next-prev">
     <a href="unit-03.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 3 · 感測器通訊介面</div></a>
     <a class="np-next" href="unit-05.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 5 · 第一個鏡頭跑起來</div></a>

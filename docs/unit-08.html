@@ -153,6 +153,64 @@ EOF</pre></div>
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>8.19 進階真實情境 Worked Example：OV9281 + OV5640 雙感測器 RAW 同步擷取與品質比較</h2>
+<p>場景：你需要同時從 OV9281（global shutter, 10-bit RAW）和 OV5640（rolling shutter, 10-bit RAW）取 RAW，做 blind image quality comparison。</p>
+<div class="demo-block"><div class="demo-label">雙感測器 RAW 同步擷取</div><pre><span class="hl-c"># 1. 兩路同時串流取 RAW</span>
+v4l2-ctl -d /dev/video0 --set-fmt-video=pixelformat=SRGGB10,width=1280,height=800 \
+  --stream-mmap=1 --stream-count=1 --stream-to=ov9281.raw
+v4l2-ctl -d /dev/video1 --set-fmt-video=pixelformat=SRGGB10,width=2592,height=1944 \
+  --stream-mmap=1 --stream-count=1 --stream-to=ov5640.raw
+<span class="hl-c"># 2. 分析腳本</span>
+python3 - <<'EOF'
+import numpy as np
+
+def analyze_raw(path, w, h, bit_depth=10, bayer='RGGB'):
+    raw = np.fromfile(path, dtype=np.uint16).reshape(h, w)
+    black = raw.min()
+    sat = (raw == (1 << bit_depth) - 1).sum()
+    flat_region = raw[h//3:2*h//3, w//3:2*w//3]
+    noise = flat_region.std()
+    return {
+        'black_level': int(black),
+        'saturated_pixels': int(sat),
+        'noise_sigma': round(float(noise), 2),
+        'dynamic_range': round(float(20 * np.log10(raw.max() / max(noise, 1))), 1)
+    }
+
+ov9281 = analyze_raw('ov9281.raw', 1280, 800)
+ov5640 = analyze_raw('ov5640.raw', 2592, 1944)
+print('OV9281:', ov9281)
+print('OV5640:', ov5640)
+EOF</pre></div>
+<p><strong>設計決策：</strong>OV9281 低解析度但高幀率（適合高速場景），OV5640 高解析度但色彩更好。RAW 分析量化了兩者的黑位、雜訊、動態範圍差異——這些是 ISP 調校前的「感測器本質」指標。</p>
+
+<h2>8.20 深入原理擴充：RAW 資料的 memory layout 與 cache 行為</h2>
+<p>RAW 資料從感測器到 CPU memory 的路徑中，經歷了 DMA 傳輸。<strong>cache line 對齊</strong>和<strong>memory stride</strong>會影響分析速度。</p>
+<table>
+<tr><th>概念</th><th>說明</th><th>對 RAW 分析的影響</th></tr>
+<tr><td>stride</td><td>每列在 memory 中的實際位元組數（可能大於 width×bytes/pixel）</td><td>reshape 時若沒考慮 stride，影像會「斜切」</td></tr>
+<tr><td>cache line</td><td>CPU cache 的最小傳輸單位（64 bytes on ARM）</td><td>非對齊的 RAW 讀取會造成 cache miss，分析速度降數倍</td></tr>
+<tr><td>DMA alignment</td><td>硬體 DMA 要求的位址對齊（通常 128 bytes）</td><td>V4L2 buffer 分配時自動處理，但自行 malloc 可能不對齊</td></tr>
+</table>
+<div class="callout warn"><strong>陷阱：</strong>「用 numpy reshape(800, 1280) 讀 RAW 檔案」——若 stride ≠ width×2（10-bit unpacked 用 16-bit 存），影像會扭曲。先用 <code>ls -l raw.raw</code> 確認檔案大小是否 = width × height × 2。</div>
+
+<h2>8.21 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>RAW 檔案大小不符合預期（width × height × bytes/pixel）</td><td>stride padding 或 packing 格式不符</td><td>計算 stride = 檔案大小 / height / bytes_per_pixel；確認 packing 格式</td></tr>
+<tr><td>numpy reshape 後影像斜切/錯位</td><td>stride ≠ width × bytes/pixel</td><td>用 <code>np.frombuffer(raw_bytes, dtype=...).reshape(-1, stride_bytes)</code> 再裁切</td></tr>
+<tr><td>RAW 分析腳本跑很久</td><td>大量 cache miss（非對齊記憶體存取）</td><td>用 <code>np.ascontiguousarray()</code> 確保連續記憶體；或用 mmap 隨機存取</td></tr>
+<tr><td>全遮黑位值高於 datasheet 標稱</td><td>黑位扣除（black level subtraction）未做</td><td>在分析前扣除黑位值；或用 ISP 的 BLC 模組預處理</td></tr>
+<tr><td>RAW 中出現固定 pattern 的亮點</td><td>缺陷像素（dead/hot pixel）</td><td>用 DPC（缺陷像素校正）處理；記錄缺陷位置供後續參數化</td></tr>
+</table>
+
+<h2>8.22 進階挑戰題</h2>
+<ol>
+<li>撰寫一個 RAW 格式自動偵測腳本：給定任意 RAW 檔案，自動判斷（1）解析度、（2）位元深、（3）packing 格式、（4）Bayer order。提示：嘗試不同假設，看哪個產生最「合理」的統計值。</li>
+<li>比較 packed vs unpacked RAW 在分析速度上的差異：取同一幀 10-bit RAW 的兩種格式，計時 min/max/mean 計算。</li>
+<li>若你的 RAW 是從多感測器同步擷取的，設計一個「時間戳對齊」腳本：從 V4L2 buffer 的 metadata 中提取每幀的時間戳，計算兩路之間的偏移量。</li>
+</ol>
+
   <div class="next-prev">
     <a href="unit-07.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 7 · ISP 管線深入</div></a>
     <a class="np-next" href="unit-09.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 9 · 各平台 ISP 架構差異</div></a>

@@ -148,6 +148,46 @@ print('R/G:', r/g, ' B/G:', b/g)   <span class="hl-c"># 應都接近 1.0</span>
     <li><a href="../learning-path.html">學習路線</a>：複習全站</li>
   </ul>
 
+  <h2>11.9 進階真實情境 Worked Example：室內/室外混合光源的 AWB 挑戰</h2>
+<p>場景：相機安裝在工廠入口，畫面同時有室內日光燈（色溫 ~4000K）和室外日光（~5500K）。AWB 需要在「兩種色溫共存」時保持自然。</p>
+<div class="demo-block"><div class="demo-label">Argus AWB 手動校正</div><pre><span class="hl-c"># 1. 先讓 auto AWB 收斂（觀察它偏向哪種色溫）</span>
+argus_camera --mode 0 --awb-auto --duration 5
+<span class="hl-c"># 2. 若 auto 偏向室外（日光範圍大），手動設定色溫</span>
+argus_camera --mode 0 --awb-manual --color-temperature 4500
+<span class="hl-c"># 3. 用灰卡量測 CCM 殘差</span>
+<span class="hl-c">#    18% 灰卡 RGB 應接近 (128,128,128)</span>
+<span class="hl-c">#    若偏暖（R > B）→ 降低色溫設定</span>
+<span class="hl-c">#    若偏冷（B > R）→ 提高色溫設定</span>
+<span class="hl-c"># 4. 最終目標：灰卡在所有光源下色彩偏差 &lt; 5%（ΔE &lt; 5）</span></pre></div>
+<p><strong>設計決策：</strong>混合光源是 AWB 的終極挑戰——auto AWB 只能「選一種」色溫當 white point。工業場景若光源穩定（日光燈+日光比例固定），手動設定色溫比 auto 更穩定。</p>
+
+<h2>11.10 深入原理擴充：CCM 的「色域映射」角色</h2>
+<p>CCM（Color Correction Matrix）不只是「調色彩」，它本質上是把感測器的「RGB 色域」映射到標準色彩空間（如 sRGB）。</p>
+<table>
+<tr><th>步驟</th><th>說明</th><th>為什麼重要</th></tr>
+<tr><td>1. 拍 24 色色卡</td><td>取得「感測器 RGB」vs「標準 XYZ」的對應</td><td>這是 CCM 計算的 input</td></tr>
+<tr><td>2. 計算 3×3 CCM</td><td>最小二乘法求最佳映射</td><td>CCM 的每行加總 ≈ 1（色彩守恆）</td></tr>
+<tr><td>3. 載入 ISP</td><td>每個 pixel 都乘以 CCM</td><td>即時校正，不耗 CPU</td></tr>
+</table>
+<div class="callout warn"><strong>陷阱：</strong>「拍白色物體，調整 CCM 讓它看起來白」——這是直覺但不正確。正確做法是<strong>拍標準色卡</strong>，讓 CCM 同時校正所有顏色（R/G/B 的 cross-talk），而不只是「讓白色更白」。只對白色調 CCM 會讓其他顏色偏移。</div>
+
+<h2>11.11 診斷式疑難排解表</h2>
+<table>
+<tr><th>症狀</th><th>可能原因</th><th>解決方案</th></tr>
+<tr><td>AWB 在日光燈下偏綠</td><td>AWB 的 green 偏移未校正（或 CCM 的 green cross-talk 過大）</td><td>用色卡重新計算 CCM；確認 CCM 的 green 行加總 ≈ 1</td></tr>
+<tr><td>AWB 在低光下偏紫</td><td>低光 gain 放大 UV 雜訊，AWB 誤判色溫</td><td>在低光下降低 AWB 靈敏度；或手動固定色溫</td></tr>
+<tr><td>手動設定色溫後畫面偏黃</td><td>設定的色溫值不準確（燈具老化/型號差異）</td><td>用色溫計量測實際光源色溫；或用灰卡校正</td></tr>
+<tr><td>AWB 在室內/室外切換時「跳色」</td><td>AWB 的 response time 太快，對短暫色溫變化過度反應</td><td>提高 AWB 的 temporal smoothness；或用 hysteresis 避免頻繁切換</td></tr>
+<tr><td>CCM 載入後畫面色彩「過飽和」</td><td>CCM 計算時色卡拍攝不標準（光源不均、角度不對）</td><td>確保色卡在均勻光源下正對鏡頭拍攝；重算 CCM</td></tr>
+</table>
+
+<h2>11.12 進階挑戰題</h2>
+<ol>
+<li>用 24 色色卡在 3 種不同光源（日光、日光燈、LED 暖白）下各拍一張 RAW，分別計算 CCM，比較三個 CCM 的差異。</li>
+<li>設計一個「AWB 響應速度測試」：在已知色溫切換點（例如 LED 燈切換色溫），計時 AWB 從一個色溫目標到另一個目標的收斂時間。</li>
+<li>若你的 CCM 計算工具回傳的 CCM 行加總不等於 1，解釋為什麼這會導致色彩偏移，並寫出修正公式。</li>
+</ol>
+
   <div class="next-prev">
     <a href="unit-10.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 10 · 曝光與自動曝光（AE）</div></a>
     <a class="np-next" href="unit-12.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 12 · 鏡頭陰影校正（LSC）</div></a>
