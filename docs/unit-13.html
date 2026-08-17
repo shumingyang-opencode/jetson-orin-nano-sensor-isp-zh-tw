@@ -78,6 +78,84 @@ EOF</pre></div>
     <ul><li>四種雜訊來源。</li><li>NVIDIA 空間+時間降噪。</li><li>「先源頭後收尾」策略。</li><li>降噪與細節取捨。</li></ul>
   </div>
 
+  <h2>13.8 深入原理：SNR 與增益的數學</h2>
+<p>影像雜訊以 <strong>SNR（dB）</strong> 度量：<code>SNR = 20·log10(訊號/σ)</code>。訊號隨曝光與增益上升；shot noise 隨訊號平方根上升——所以「增益補曝光」會讓 SNR 惡化，而「加光」讓訊號與雜訊一起升、SNR 反而變好。</p>
+<div class="demo-block"><div class="demo-label">兩種補光策略的 SNR 對比</div><pre><span class="hl-c"># 方案 A：增益 ×4 補曝光（訊號 4x，σ 約 2x）</span>
+SNR_A = 20*log10(400/20) ≈ 26 dB
+<span class="hl-c"># 方案 B：補光讓光多 4x、增益不變（訊號 4x，σ 約 2x 同 shot noise）</span>
+<span class="hl-c"># 但 B 的 σ 起點低，且不放大 read noise：</span>
+SNR_B ≈ 20*log10(1600/32) ≈ 34 dB   <span class="hl-c"># 高出 8 dB</span>
+<span class="hl-c"># 結論：光源 → 曝光 → 類比增益 → 數位增益，順序不可反</span></pre></div>
+
+<h2>13.9 深入原理：DPC 與 NR 的交互</h2>
+<p>缺陷像素（hot/dead pixel）是「確定性」異常，統計性 NR 會把它擴散成亮斑；因此管線必須<strong>先 DPC（defect pixel correction）修缺陷、再 NR 降統計雜訊</strong>。</p>
+<table>
+<tr><th>處理</th><th>處理什麼</th><th>放哪裡</th></tr>
+<tr><td>DPC</td><td>固定缺陷像素</td><td>NR 之前</td></tr>
+<tr><td>空間 NR</td><td>隨機亮點</td><td>DPC 之後</td></tr>
+<tr><td>時間 NR</td><td>跨幀穩定雜訊</td><td>最後（動態場景小心鬼影）</td></tr>
+</table>
+<div class="callout warn"><strong>驗證：</strong>拍黑框（蓋鏡頭），RAW 的 max 值應被 DPC 壓制；若仍有一堆亮點 → DPC 沒生效或缺陷表沒建。</div>
+
+<h2>13.10 疑難排解決策樹：影像顆粒感</h2>
+<div class="demo-block"><div class="demo-label">決策樹</div><pre>1. 增益是否過高？
+   ├─ 是 → 補光 / 降增益 / 長曝光（先檢查 banding）
+   └─ 否 ┐
+2. 是固定亮點還是一般顆粒？
+   ├─ 固定亮點 → DPC 沒處理 / 缺陷表
+   └─ 一般顆粒 ┐
+3. NR 已開？
+   ├─ 未開 → 開 NR（空間+時間）
+   └─ 已開仍粗 ┐
+4. 動態場景有鬼影？
+   ├─ 是 → 時間 NR 過強：調降
+   └─ 否 → 檢查 NR 與 sharpening 平衡（單元 14）</pre></div>
+
+<h2>13.11 常見錯誤 / 陷阱</h2>
+<div class="callout warn"><strong>陷阱 ①：</strong>「NR 開滿」掩蓋感測器增益問題——NR 過強會讓細節變塑膠感。先修源頭（增益），NR 只收尾。</div>
+<div class="callout warn"><strong>陷阱 ②：</strong>拿 NV12 判斷 NR——用 RAW 量 σ 才準（回顧 13.6 的 script）。</div>
+<div class="callout warn"><strong>陷阱 ③：</strong>時間 NR 在動態場景造成鬼影——速度優先的機器視覺要特別小心。</div>
+
+<h2>13.12 練習</h2>
+<ol>
+<li>量測你的感測器各增益的 σ，畫出 σ vs gain。</li>
+<li>拍黑框驗證 DPC 是否壓制亮點。</li>
+<li>寫下你平台的「增益上限」決策與理由。</li>
+</ol>
+
+  <h2>13.13 進階：讀出雜訊與感測器增益結構</h2>
+<p>類比增益（AGC）放大「訊號+讀出雜訊」，數位增益只放大訊號數字——所以同一總增益下，<strong>類比優先</strong>通常比數位放大乾淨。但類比增益太高仍會放大熱雜訊；實際每顆感測器各有甜蜜點。</p>
+<div class="demo-block"><div class="demo-label">找出你感測器的甜蜜點</div><pre><span class="hl-c"># 固定曝光，逐級類比增益量 σ</span>
+for g in 1 1.5 2 3 4 6 8; do
+  v4l2-ctl -d /dev/v4l-subdev0 -c analogue_gain=$g
+  argus_camera --mode 0 --capture-auto 1 --raw-file g$g.raw --duration 1
+done
+# σ 突增點 = 此後增益不可用 → 設為上限</pre></div>
+
+<h2>13.14 快速參考：雜訊除錯小抄</h2>
+<table>
+<tr><th>症狀</th><th>先查</th></tr>
+<tr><td>整片顆粒</td><td>增益過高 → 補光/曝光</td></tr>
+<tr><td>固定亮點</td><td>DPC / 缺陷表</td></tr>
+<tr><td>暗處彩色雜訊</td><td>暗部增益過高 + NR</td></tr>
+<tr><td>長曝光亮點變多</td><td>dark current → 降溫/減曝光</td></tr>
+<tr><td>動態鬼影</td><td>時間 NR 過強</td></tr>
+</table>
+
+<h2>13.15 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> 雜訊策略：光源 → 曝光 → 類比增益 → 數位增益 → NR 收尾。<br><strong>②</strong> DPC 修確定性缺陷，NR 修統計性雜訊，順序不可反。<br><strong>③</strong> 用 RAW 量 σ 判斷，別拿 NV12 猜。</div>
+
+  <h2>13.16 Worked Example：區分空間 / 時間 NR 的影響</h2>
+<div class="demo-block"><div class="demo-label">兩種 NR 的辨別法</div><pre><span class="hl-c"># 靜態場景：空間+時間 NR 都有效，畫質最好</span>
+<span class="hl-c"># 放一個緩慢移動物體：</span>
+<span class="hl-c">#   - 有鬼影/拖影 → 時間 NR 過強（試降時間強度）</span>
+<span class="hl-c">#   - 移動體顆粒仍在 → 空間 NR 不足（試升空間強度）</span>
+<span class="hl-c"># 高速運動：直接關時間 NR，只留空間 NR</span></pre></div>
+<div class="callout"><strong>取捨：</strong>靜態場景可以靠時間 NR 大幅降噪；動態場景時間 NR 是敵人。測試時一定包含「運動」場景，別只看靜態。</div>
+
+<h2>13.17 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> 先源頭（光源/曝光/增益）後收尾（NR）。<br><strong>②</strong> DPC 在 NR 前。<br><strong>③</strong> 時間 NR 慎用於動態場景。</div>
+
   <h2>延伸閱讀</h2>
   <ul>
     <li>下一篇：<a href="unit-14.html">單元 14 · 清晰度/HDR/調校工作流</a>。</li>

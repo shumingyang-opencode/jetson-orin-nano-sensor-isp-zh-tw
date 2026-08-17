@@ -55,6 +55,92 @@ v4l2-ctl --list-devices</pre></div>
     <ul><li>tegracam 角色。</li><li>DTB 感測器節點宣告。</li><li>Argus 列舉相機。</li><li>驅動→Argus→ISP 關係。</li></ul>
   </div>
 
+  <h2>4.4 深入原理：tegracam 在 Linux 相機棧的位置</h2>
+<div class="pipe"><span class="step">感測器驅動</span><span class="arr">→</span><span class="step">tegracam 框架</span><span class="arr">→</span><span class="step">tegra-camera（V4L2 subdev）</span><span class="arr">→</span><span class="step">VI5（video capture）</span><span class="arr">→</span><span class="step">Argus / V4L2 userspace</span></div>
+<p>tegracam 提供統一的 V4L2 <strong>controls</strong>（exposure、gain、white balance…），感測器驅動只要實作 init table 與 register 讀寫，就能把曝光/增益暴露給 userspace。這就是「Argus 設曝光 → 最後落到感測器 register」的橋樑。</p>
+<table>
+<tr><th>層</th><th>角色</th><th>除錯時看什麼</th></tr>
+<tr><td>感測器驅動</td><td>I2C 讀寫 + init table</td><td>probe 訊息、ID 讀取</td></tr>
+<tr><td>tegracam</td><td>統整 V4L2 controls</td><td><code>v4l2-ctl -C</code> 列表</td></tr>
+<tr><td>VI5</td><td>CSI 收 frame</td><td>dmesg 的 vi5/csi 錯誤</td></tr>
+<tr><td>Argus</td><td>會話式相機 API</td><td>argus_camera 出圖</td></tr>
+</table>
+
+<h2>4.5 深入原理：DTB camera 節點與 mode</h2>
+<p>每個感測器在 DTB 宣告一個 camera 節點，內含 <strong>mode0/mode1…</strong>，每個 mode 定義解析度、幀率、CSI lane 數、Bayer order、曝光/增益範圍與 <code>pixel_phase</code>。</p>
+<div class="demo-block"><div class="demo-label">OV9281 camera 節點（模式重點）</div><pre>&amp;ov9281_cam0 {
+    status = "okay";
+    reg = &lt;0x36&gt;;               <span class="hl-c"># I2C 位址</span>
+    mode0 {
+        mclk_khz = &lt;24000&gt;;    <span class="hl-c"># MCLK 24 MHz</span>
+        num_lanes = &lt;2&gt;;       <span class="hl-c"># CSI lane 數</span>
+        tegra_sinterface = "serial_a";
+        phy_mode = "DPHY";
+        pixel_phase = "bggr";   <span class="hl-c"># Bayer 起點</span>
+        active_w = &lt;1280&gt;; active_h = &lt;800&gt;;
+        min_framerate = &lt;1&gt;; max_framerate = &lt;120&gt;;
+        min_exp_time = &lt;1&gt;; max_exp_time = &lt;33333&gt;;
+    };
+};</pre></div>
+<div class="callout warn"><strong>mode 對不上的後果：</strong>Argus 列出的解析度/幀率/曝光範圍來自 mode——mode 寫錯，userspace 就「看不到」正確選項，甚至 probe 直接失敗。改 DTB 需重編 device tree 並刷入。</div>
+
+<h2>4.6 Worked Example：從 DTB 到 Argus 列舉</h2>
+<div class="demo-block"><div class="demo-label">逐步驗證</div><pre><span class="hl-c"># 1. 確認 overlay 已套用</span>
+dmesg | grep -i "camera|tegra-camera|ov9281"
+<span class="hl-c"># 2. 檢查 media 管線拓撲</span>
+media-ctl -p -d /dev/media0
+<span class="hl-c"># 3. 檢查 subdev 與 controls</span>
+v4l2-ctl -d /dev/v4l-subdev0 --list-ctrls
+<span class="hl-c"># 4. Argus 列舉</span>
+argus_camera --list-cameras</pre></div>
+<p class="hint">若 1、2 有、3、4 沒有 → controls/Argus 對接問題；若 1 就沒有 → 回到 DTB/電源/serdes。</p>
+
+<h2>4.7 常見錯誤 / 陷阱</h2>
+<div class="callout warn"><strong>陷阱 ①：</strong>改了 DTB 卻沒重新產生 DTB 並刷入 bootloader——「改了但沒生效」最常見。</div>
+<div class="callout warn"><strong>陷阱 ②：</strong>pixel_phase 與感測器實際 Bayer 起點不符——色彩全錯，而且 V4L2 不會報錯。</div>
+<div class="callout warn"><strong>陷阱 ③：</strong>mode 的 max_framerate/曝光範圍設定太窄——AE 自動收斂會卡住（回顧單元 10）。</div>
+
+<h2>4.8 練習</h2>
+<ol>
+<li>用 media-ctl 畫出你的 media 管線拓撲並記錄。</li>
+<li>列出 v4l-subdev0 的 exposure / gain 範圍。</li>
+<li>解釋「改 DTB 後看不到相機」的除錯順序。</li>
+</ol>
+
+  <h2>4.9 進階：media-ctl 管線與格式設定</h2>
+<p>tegracam 的多個 subdev（感測器 → CSI → VI）以「連結」串成 media graph。V4L2 userspace 要出圖前，這些連結與格式（sink/source pad 的 fourcc、尺寸）必須一致。</p>
+<div class="demo-block"><div class="demo-label">檢查與設定管線</div><pre><span class="hl-c"># 印出拓撲與格式</span>
+media-ctl -p -d /dev/media0
+<span class="hl-c"># 設定感測器 source pad 格式（範例）</span>
+media-ctl -d /dev/media0 --set-v4l2 '"ov9281 0-0036":0[fmt:SRGGB10_1X10/1280x800]'</pre></div>
+<div class="callout warn"><strong>格式不連貫的後果：</strong>感測器輸出 RAW10、VI 卻設成 NV12 → 出圖失敗或花屏。每個 pad 的格式都要「沿著管線連貫」。</div>
+
+<h2>4.10 快速參考：驅動層除錯小抄</h2>
+<table>
+<tr><th>檢查</th><th>指令</th><th>通過標準</th></tr>
+<tr><td>probe</td><td><code>dmesg | grep -i ov9281</code></td><td>有 probe/ID 訊息</td></tr>
+<tr><td>拓撲</td><td><code>media-ctl -p</code></td><td>感測器→CSI→VI 完整</td></tr>
+<tr><td>controls</td><td><code>v4l2-ctl -d /dev/v4l-subdev0 --list-ctrls</code></td><td>exposure/gain 在列</td></tr>
+<tr><td>列舉</td><td><code>argus_camera --list-cameras</code></td><td>看得到相機</td></tr>
+</table>
+
+<h2>4.11 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> tegracam 把感測器控制統整成 V4L2 controls，Argus 才用得上。<br><strong>②</strong> DTB 的 camera 節點 + mode 定義了「userspace 看得到的選項」。<br><strong>③</strong> 改 DTB 要重編並刷入，改完要驗證（probe + media + argus）。</div>
+
+  <h2>4.12 Worked Example：改 DTB 後的完整驗證流程</h2>
+<div class="demo-block"><div class="demo-label">改 mode 後驗證</div><pre><span class="hl-c"># 1. 重建 DTB 並刷入（bootloader / overlay 方式）</span>
+<span class="hl-c"># 2. 重開機，確認 overlay 有套</span>
+dmesg | grep -i "camera|ov9281"
+<span class="hl-c"># 3. 檢查新 mode 是否列得出來</span>
+argus_camera --list-cameras
+v4l2-ctl -d /dev/video0 --list-formats-ext
+<span class="hl-c"># 4. 取一幀，驗證尺寸與格式符合新 mode</span>
+v4l2-ctl -d /dev/video0 --stream-mmap=1 --stream-count=1 --stream-to=t.raw</pre></div>
+<div class="callout warn"><strong>陷阱：</strong>「dmesg 沒 error」不代表新 mode 生效——以「列得出 + 取得到 + 尺寸對」三項為準。</div>
+
+<h2>4.13 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> tegracam 是感測器控制與 Argus 的橋樑。<br><strong>②</strong> DTB mode 定義 userspace 看得到的選項。<br><strong>③</strong> 改完 DTB 要「重編 → 刷入 → 列舉 → 取幀」驗證。</div>
+
   <h2>延伸閱讀</h2>
   <ul>
     <li>下一篇：<a href="unit-05.html">單元 5 · 第一個鏡頭跑起來</a>。</li>

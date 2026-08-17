@@ -63,6 +63,71 @@ sudo i2cget -y 0 0x36 0x300b     <span class="hl-c"># = 0x81</span></pre></div>
     <ul><li>Orin 上 I2C 控制感測器。</li><li>GMSL 的 I2C 通道概念。</li><li>OV9281 ID register。</li><li>「讀不到 ID」排查。</li></ul>
   </div>
 
+  <h2>3.10 深入原理：I2C 傳輸的位元級細節</h2>
+<p>I2C 一次 transaction：<strong>START → 7-bit 位址 + R/W → ACK → 資料位元組 → STOP</strong>。感測器位址左移 1 位當作控制位元：<code>0x36 &lt;&lt; 1 | 0</code> = 寫，<code>0x36 &lt;&lt; 1 | 1</code> = 讀。</p>
+<div class="pipe"><span class="step">S</span><span class="arr">→</span><span class="step">0x6C（寫）</span><span class="arr">→</span><span class="step">reg 高</span><span class="arr">→</span><span class="step">reg 低</span><span class="arr">→</span><span class="step">資料</span><span class="arr">→</span><span class="step">P</span></div>
+<div class="callout warn"><strong>ACK 檢查：</strong>感測器有回應會拉低 SDA（ACK=0）；無回應時 SDA 維持高（NACK）。<code>i2cdetect</code> 就是靠「送位址看有沒有 ACK」來列裝置——讀到 NACK 通常代表位址錯或感測器沒上電。</div>
+
+<h2>3.11 深入原理：GMSL 的 I2C 位址重映射（address remap）</h2>
+<p>GMSL 的感測器 I2C 不是直接接在 Orin 的匯流排上，而是經 deserializer 轉送。deserializer 可把感測器位址<strong>重映射</strong>（remap）到不同匯流排位址，避免多顆同型感測器衝突。</p>
+<div class="demo-block"><div class="demo-label">GMSL I2C 除錯順序</div><pre><span class="hl-c"># 1. 先用 vendor 工具或直接下 deserializer 指令確認 link lock</span>
+sudo i2cget -y 0 0x29 0x0012   <span class="hl-c"># 範例：MAX96712 lock register（示意）</span>
+<span class="hl-c"># 2. 確認 remap 後的感測器位址</span>
+sudo i2cdetect -y 0
+<span class="hl-c"># 3. 才讀感測器 ID</span>
+sudo i2cget -y 0 0x36 0x300a</pre></div>
+<div class="callout warn"><strong>錯誤順序：</strong>先讀感測器（跳過 deserializer）→ 全 NACK → 誤判感測器壞。GMSL 下「先 lock、後感測器」是不可違反的順序。</div>
+
+<h2>3.12 Worked Example：用 i2ctransfer 讀寫並回讀驗證</h2>
+<div class="demo-block"><div class="demo-label">i2ctransfer（避免 i2cget 的 16-bit 位址陷阱）</div><pre><span class="hl-c"># 讀 OV9281 ID：w2 = 寫 2 位元組位址，r1 = 讀 1 位元組</span>
+sudo i2ctransfer -y 0 w2@0x36 0x30 0x0a r1
+<span class="hl-c"># 預期回傳 0x92</span>
+
+<span class="hl-c"># 寫入後回讀驗證（例：設曝光高位）</span>
+sudo i2ctransfer -y 0 w3@0x36 0x35 0x00 0x50
+sudo i2ctransfer -y 0 w2@0x36 0x35 0x00 r1   <span class="hl-c"># 應回 0x50</span></pre></div>
+<p class="hint">「寫入 → 回讀 → 比對」是驗證 register 是否真的寫進感測器的唯一方法。寫了讀不回 = 電源/reset/時序問題（回顧單元 6）。</p>
+
+<h2>3.13 疑難排解決策樹：讀不到感測器 ID</h2>
+<div class="demo-block"><div class="demo-label">決策樹</div><pre>1. i2cdetect 看得到裝置？
+   ├─ 看不到 ─┬─ 非 GMSL：位址/上拉/電源
+   │          └─ GMSL：先查 serdes lock 與 remap
+   └─ 看得到 ┐
+2. 讀回全 0xFF？
+   ├─ 是 ─→ 位址錯 / 上拉電壓不足
+   └─ 否 ┐
+3. 讀回全 0x00？
+   ├─ 是 ─→ 上電 / reset 未釋放
+   └─ 否 ─→ 讀到預期 ID → ✅</pre></div>
+
+<h2>3.14 常見錯誤 / 陷阱</h2>
+<div class="callout warn"><strong>陷阱 ①：</strong>i2cget 對 16-bit register 位址的處理各工具不同——<code>i2cget -y bus addr reg</code> 的 reg 只送 1 位元組，OV 系 16-bit 位址要用 i2ctransfer 的 <code>w2</code>。</div>
+<div class="callout warn"><strong>陷阱 ②：</strong>多顆感測器共用匯流排時位址衝突——用 deserializer remap 或 DTB 指派不同位址。</div>
+<div class="callout warn"><strong>陷阱 ③：</strong>GMSL 上「reset 未釋放」的感測器會吞掉所有 I2C 寫入（像死掉），但讀 ID 又可能是 0x00——先看 reset GPIO 再怪硬體。</div>
+
+<h2>3.15 練習</h2>
+<ol>
+<li>用 i2ctransfer 讀 OV9281 與 IMX219 的 ID。</li>
+<li>對任一 register 做「寫入 → 回讀 → 比對」。</li>
+<li>若使用 GMSL，寫下你的 remap 流程與 lock 驗證指令。</li>
+</ol>
+
+  <h2>3.16 進階：SCCB 與 I2C 的相容性</h2>
+<p>OmniVision 的 register 介面源自 <strong>SCCB</strong>（Serial Camera Control Bus）——它與 I2C 高度相容（位址 + 資料、START/STOP），差異多在細節（如是否支援重複起始、時脈規格）。實務上 Linux i2c 工具可直接操作，不必特判 SCCB。</p>
+<div class="callout warn"><strong>常見誤解：</strong>有人以為「SCCB 就不能用 i2cget」——實際上 OV 感測器在 Linux 上都走標準 I2C bus，工具照用，只需注意 register 位址寬度（8-bit vs 16-bit）。</div>
+
+<h2>3.17 快速參考：I2C 除錯小抄</h2>
+<table>
+<tr><th>症狀</th><th>最可能原因</th><th>先查</th></tr>
+<tr><td>i2cdetect 看不到</td><td>位址錯 / 沒上電 / GMSL 沒通</td><td>deserializer lock → remap</td></tr>
+<tr><td>讀回全 0xFF</td><td>上拉不足 / 位址錯</td><td>電壓、pull-up</td></tr>
+<tr><td>讀回全 0x00</td><td>reset 未釋放 / 上電不完整</td><td>GPIO 時序</td></tr>
+<tr><td>寫了讀不回</td><td>register 位址寬度錯</td><td>用 w2 送 16-bit 位址</td></tr>
+</table>
+
+<h2>3.18 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> 感測器經 I2C 控制，GMSL 下要「先打通 deserializer、再讀感測器」。<br><strong>②</strong> 驗證 register 的唯一方法：寫入 → 回讀 → 比對。<br><strong>③</strong> 讀到全 0xFF / 全 0x00 各有不同意涵，別急著怪硬體。</div>
+
   <h2>延伸閱讀</h2>
   <ul>
     <li>下一篇：<a href="unit-04.html">單元 4 · 相機框架與驅動</a>。</li>

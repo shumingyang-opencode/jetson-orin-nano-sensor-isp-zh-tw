@@ -75,6 +75,93 @@
     <ul><li>NVIDIA 銳化/對比。</li><li>多幀 HDR 與 tone mapping。</li><li>NVIDIA 調校工作流五步。</li><li>「讓自動化做事」哲學。</li></ul>
   </div>
 
+  <h2>14.8 深入原理：Sharpening 的雙面刃</h2>
+<p>銳化（unsharp mask 類）強化高頻邊緣，但也放大高頻雜訊；過度銳化會產生<strong>光暈（halo）</strong>——高對比邊緣旁的白色/黑色光邊。判斷標準：看高對比物（黑字白底）邊緣是否有光邊。</p>
+<div class="demo-block"><div class="demo-label">銳化 vs 雜訊的取捨</div><pre><span class="hl-c"># 三個量測指標</span>
+<span class="hl-c"># 1. 解析度：拍解析度測試卡，看能解到哪一線對</span>
+<span class="hl-c"># 2. 雜訊：灰卡 RAW 的 σ（回顧單元 13）</span>
+<span class="hl-c"># 3. 光暈：高對比邊緣的 overshoot 寬度</span>
+<span class="hl-c"># 口訣：銳化升到「光暈出現前」為止</span></pre></div>
+<div class="callout warn"><strong>取捨紀律：</strong>先確定 SNR 足夠（單元 13），再調 sharpening；低 SNR 下銳化只會把雜訊變成「銳利的花」。</div>
+
+<h2>14.9 深入原理：HDR 與 tone mapping 的選擇</h2>
+<table>
+<tr><th>方案</th><th>適用</th><th>代價</th></tr>
+<tr><td>多幀/多曝光 HDR</td><td>靜態高動態場景</td><td>運動會鬼影、需要合併時間</td></tr>
+<tr><td>單幀 + tone mapping</td><td>動態場景</td><td>動態範圍受限，靠曲線壓縮</td></tr>
+<tr><td>感測器原生 HDR（如行交錯）</td><td>感測器支援時</td><td>需感測器支援</td></tr>
+</table>
+<div class="callout"><strong>工程判斷：</strong>先量「場景動態範圍」——亮暗是否同時爆掉。若只差 2–3 EV，tone mapping 就夠；差 6+ EV 才需要多幀 HDR。盲目開 HDR 反而引入鬼影與延遲。</div>
+
+<h2>14.10 疑難排解決策樹：高對比場景</h2>
+<div class="demo-block"><div class="demo-label">決策樹</div><pre>1. 亮部爆掉、暗部全黑？
+   ├─ 是 → 量動態範圍需求
+   │        ├─ ≤3 EV → 調 tone mapping / 曲線
+   │        └─ >3 EV → 多幀 HDR（靜態）或接受取捨（動態）
+   └─ 否 ┐
+2. 暗部ok但亮部爆？
+   ├─ 是 → 降曝光 / 開高光保護（tone）
+   └─ 否 ┐
+3. 亮部ok但暗部黑？
+   ├─ 是 → 開陰影提升 / 補光
+   └─ 否 → ✅ 平衡</pre></div>
+
+<h2>14.11 常見錯誤 / 陷阱</h2>
+<div class="callout warn"><strong>陷阱 ①：</strong>動態場景硬開多幀 HDR → 鬼影 + 幀率下降，比沒 HDR 更糟。</div>
+<div class="callout warn"><strong>陷阱 ②：</strong>tone mapping 硬拉暗部 → 把量化階調「拉斷」，暗部出現條帶。</div>
+<div class="callout warn"><strong>陷阱 ③：</strong>每次調校不記錄 → 無法回歸比較，改壞了不知道。用 14.7 的 log 範本。</div>
+
+<h2>14.12 練習</h2>
+<ol>
+<li>做一次「銳化階梯」，找出光暈出現點。</li>
+<li>量測一個高對比場景的 EV 範圍，判斷要 HDR 還是 tone mapping。</li>
+<li>完成一輪完整的「校正→美化→回歸」並填 log。</li>
+</ol>
+
+  <h2>14.13 進階：完整調校工作流的順序與理由</h2>
+<p>調校順序不是隨意的，每一級都依賴前一級正確：</p>
+<div class="pipe"><span class="step">黑位</span><span class="arr">→</span><span class="step">LSC</span><span class="arr">→</span><span class="step">AWB/CCM</span><span class="arr">→</span><span class="step">曝光基準</span><span class="arr">→</span><span class="step">NR</span><span class="arr">→</span><span class="step">Sharpen</span><span class="arr">→</span><span class="step">回歸</span></div>
+<table>
+<tr><th>級</th><th>為什麼在前面</th></tr>
+<tr><td>黑位</td><td>錯的黑位會污染所有亮度判斷</td></tr>
+<tr><td>LSC</td><td>不均勻的亮度會誤導 AWB/曝光統計</td></tr>
+<tr><td>AWB/CCM</td><td>色彩基準要先於「美化」</td></tr>
+<tr><td>NR/Sharpen</td><td>「美化」最後做，且互相牽制</td></tr>
+<tr><td>回歸</td><td>確認前面沒被後面弄壞</td></tr>
+</table>
+<div class="callout warn"><strong>紀律：</strong>跳級調校 = 前面的錯誤會污染後面——例如黑位錯就做 AWB，之後怎麼校色都不對。</div>
+
+<h2>14.14 快速參考：調校小抄</h2>
+<table>
+<tr><th>症狀</th><th>該動哪一級</th></tr>
+<tr><td>暗部偏黑/浮灰</td><td>黑位（8）</td></tr>
+<tr><td>四角暗</td><td>LSC（12）</td></tr>
+<tr><td>色彩偏</td><td>AWB/CCM（11）</td></tr>
+<tr><td>顆粒</td><td>NR / 增益（13）</td></tr>
+<tr><td>不銳利</td><td>Sharpen</td></tr>
+<tr><td>亮暗爆掉</td><td>HDR / tone（本單元）</td></tr>
+</table>
+
+<h2>14.15 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> 調校順序：黑位 → LSC → AWB/CCM → 曝光 → 美化 → 回歸。<br><strong>②</strong> HDR 依動態範圍需求選，運動場景別硬開。<br><strong>③</strong> 一次只改一個參數，log 完整才可回歸。</div>
+
+  <h2>14.16 Worked Example：tone mapping 的量化驗證</h2>
+<div class="demo-block"><div class="demo-label">量亮暗部是否同時保得住</div><pre><span class="hl-c"># 拍含亮窗+暗室內的高對比場景</span>
+python3 - <<'EOF'
+import numpy as np
+# img: NV12 轉的亮度平面（或 RAW）
+h, w = img.shape
+dark = img[..., 200].mean()   # 暗部均值
+brt  = img[..., 20].mean()    # 亮部（窗）均值
+print('亮部', round(brt,1), '暗部', round(dark,1),
+      '差', round(brt-dark,1))
+# 暗部太低 → 陰影提升；亮部爆 → 高光保護
+EOF</pre></div>
+<div class="callout warn"><strong>紀律：</strong>tone mapping 是「曲線」不是「魔法」——它犧牲對比換動態範圍。量化亮暗部數值再調，別憑感覺。</div>
+
+<h2>14.17 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> 調校順序不可跳級。<br><strong>②</strong> HDR 依動態範圍需求選，運動場景慎用。<br><strong>③</strong> 記錄 + 量化 + 一次一參數，才可回歸。</div>
+
   <h2>延伸閱讀</h2>
   <ul>
     <li>下一篇：<a href="unit-15.html">單元 15 · 四平台影像調校比較</a>。</li>

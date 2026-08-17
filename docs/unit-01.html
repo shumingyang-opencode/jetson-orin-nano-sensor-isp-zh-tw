@@ -49,6 +49,92 @@
     <ul><li>Orin Nano 的 CSI + GMSL 架構。</li><li>V4L2 與 Argus 的分工。</li><li>GMSL serdes 在工業相機的角色。</li><li>常見 OmniVision 感測器模組。</li></ul>
   </div>
 
+  <h2>1.4 深入原理：MIPI CSI-2 位元流</h2>
+<p>MIPI CSI-2 是點對點串列介面。Orin Nano 的 CSI 控制器收 <strong>D-PHY</strong>：4 條 data lane + 1 條 clock lane，每條 lane 是差動對（HS 高速傳資料、LP 低功耗傳控制）。</p>
+<table>
+<tr><th>名詞</th><th>說明</th><th>對除錯的意義</th></tr>
+<tr><td>lane</td><td>差動資料通道</td><td>lane 數不足 → 頻寬不足 → 掉幀</td></tr>
+<tr><td>HS / LP</td><td>高速資料 / 低功耗控制態</td><td>HS 才傳影像，LP 管喚醒與開機</td></tr>
+<tr><td>data type</td><td>packet 標記內容（RAW8/RAW10/YUV…）</td><td>格式宣告錯 → 畫面全錯</td></tr>
+<tr><td>virtual channel</td><td>同一介面分多邏輯通道</td><td>多感測器共用 CSI 時依賴此機制</td></tr>
+</table>
+<p>時序上：感測器送 <strong>frame start → 逐列 line → frame end</strong>。列與列間的空檔（blanking）留給時脈裕度與曝光調度；Orin 的 RTCPU 負責依 DTB 的時序參數收 frame。</p>
+
+<h2>1.5 深入原理：GMSL 的時序角色</h2>
+<p>GMSL（Gigabit Multimedia Serial Link）把 MIPI 訊號「串列化」後走同軸電纜，拉長距離後再由 deserializer 還原成 MIPI。</p>
+<div class="pipe"><span class="step">感測器 MIPI</span><span class="arr">→</span><span class="step">serializer（如 MAX96717）</span><span class="arr">→</span><span class="step">同軸線</span><span class="arr">→</span><span class="step">deserializer（MAX96712）</span><span class="arr">→</span><span class="step">Orin CSI</span></div>
+<div class="callout warn"><strong>關鍵概念：</strong>GMSL 加了一層「link 建立」——serializer 與 deserializer 要先 lock（頻率對齊），資料才通。這就是為什麼 GMSL 除錯第一步永遠是「確認 lock」，而不是直接讀感測器。</div>
+
+<h2>1.6 Worked Example：從上電到看到第一張圖</h2>
+<div class="demo-block"><div class="demo-label">Orin Nano + IMX219 / OV9281 第一次開機</div><pre><span class="hl-c"># 1. 確認系統版本</span>
+cat /etc/nv_tegra_release
+<span class="hl-c"># 2. 確認相機驅動有 probe</span>
+dmesg | grep -i -E "imx219|ov9281|vi5|tegra-camera"
+<span class="hl-c"># 3. 列出 V4L2 裝置</span>
+v4l2-ctl --list-devices
+<span class="hl-c"># 4. 用 Argus 出圖（鏈路通的終極證明）</span>
+argus_camera --mode 0 --capture-auto 1 --duration 1</pre></div>
+<p>四步走完看到檔案 = 感測器 → CSI → NVIDIA ISP → 輸出 整條鏈路打通。之後才進入「控制」與「調校」。</p>
+
+<h2>1.7 疑難排解決策樹：argus 看不到相機</h2>
+<div class="demo-block"><div class="demo-label">決策樹</div><pre>1. dmesg 有 tegra-camera-rtcpu 嗎？
+   ├─ 無 ─→ RTCPU firmware / DTB 問題
+   └─ 有 ┐
+2. 感測器驅動 probe 成功？
+   ├─ 無 ─→ (GMSL) serdes lock？→ 線材/電源/overlay
+   └─ 有 ┐
+3. v4l2-ctl --list-devices 出現 /dev/video0？
+   ├─ 無 ─→ media 管線沒接好（tegracam graph）
+   └─ 有 ┐
+4. argus_camera 出圖 → ✅</pre></div>
+
+<h2>1.8 常見錯誤 / 陷阱</h2>
+<div class="callout warn"><strong>陷阱 ①：</strong>IMX219 與 OV9281 的 I2C 位址不同（IMX219=0x10、OV9281=0x36）——DTB 或 i2cdetect 用錯位址就會「找不到裝置」。</div>
+<div class="callout warn"><strong>陷阱 ②：</strong>GMSL 模組在 Orin 上若沒先載入 deserializer 的 I2C alias，即使實體感測器正常也讀不到——這不是感測器壞，是「I2C 通道還沒切」。</div>
+<div class="callout warn"><strong>陷阱 ③：</strong>Orin Nano 開發套件的 22-pin CSI 連接器是 4-lane，若使用其他板載配置，lane 數 / 電源腳位必須對齊，接錯可能燒模組。</div>
+
+<h2>1.9 練習</h2>
+<ol>
+<li>在 Orin 上跑完整「上電 → 列舉 → 出圖」流程並記錄輸出。</li>
+<li>寫下你的平台：CSI lane 數、感測器型號、I2C 位址。</li>
+<li>模擬一次 GMSL 模組：「先確認 lock、再讀 ID」的口訣背一遍。</li>
+</ol>
+
+  <h2>1.10 進階：CSI 多通道與虛擬通道（VC）</h2>
+<p>Orin 的 CSI 支援 <strong>virtual channel</strong>：多顆感測器可共用同一個物理 CSI 介面，靠 packet 裡的 VC 標記區分。GMSL deserializer 通常把每一路 link 對應到一個 VC 或一個獨立 CSI 介面。</p>
+<div class="demo-block"><div class="demo-label">判斷你用的是哪種</div><pre><span class="hl-c"># 看 media 拓撲：獨立介面 vs 共享 VC</span>
+media-ctl -p -d /dev/media0
+<span class="hl-c"># 多 VC 時每個 VC 有獨立的 /dev/videoN</span>
+v4l2-ctl --list-devices</pre></div>
+<div class="callout warn"><strong>除錯影響：</strong>若 DTB 把某路對到錯誤的 VC/lane，畫面會「串頻」或取到別顆的資料——先畫出拓撲再談問題。</div>
+
+<h2>1.11 快速參考：Orin Nano 相機小抄</h2>
+<table>
+<tr><th>項目</th><th>值 / 指令</th></tr>
+<tr><td>CSI 連接器</td><td>22-pin，4-lane D-PHY</td></tr>
+<tr><td>長距離多感測器</td><td>GMSL + MAX96712 類 deserializer</td></tr>
+<tr><td>出圖驗證</td><td><code>argus_camera --mode 0 --capture-auto 1 --duration 1</code></td></tr>
+<tr><td>列舉裝置</td><td><code>v4l2-ctl --list-devices</code></td></tr>
+<tr><td>感測器控制</td><td><code>v4l2-ctl -d /dev/v4l-subdev0 -C exposure</code></td></tr>
+<tr><td>官方模組</td><td>IMX219 / IMX477</td></tr>
+</table>
+
+<h2>1.12 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> Orin Nano 是「工業級」相機平台：CSI-2 + GMSL + NVIDIA ISP。<br><strong>②</strong> Argus 是完整調校入口，V4L2 是標準介面——兩者都要會。<br><strong>③</strong> 「出圖成功」是鏈路通的終極證明，之後才談控制與調校。</div>
+
+  <h2>1.13 Worked Example：估算 CSI 頻寬是否足夠</h2>
+<div class="demo-block"><div class="demo-label">頻寬粗算</div><pre><span class="hl-c"># 一幀資料量 = W × H × bits/pixel × 3/2（若 YUV420）</span>
+# 4-lane D-PHY 典型可用頻寬 ~2-4 Gbps（依 HS 時脈）
+# 例：1280x800 RAW10 @ 120fps
+1280 * 800 * 10 * 120 = 1,228,800,000 bps ≈ 1.2 Gbps ✓
+# 例：3280x2464 RAW10 @ 30fps
+3280 * 2464 * 10 * 30 = 2,424,576,000 bps ≈ 2.4 Gbps ⚠ 接近上限
+# 算出來逼近可用頻寬 → 掉幀風險，需降解析度/幀率/位元深</pre></div>
+<div class="callout warn"><strong>除錯連結：</strong>「掉幀」不一定是感測器壞——先算頻寬（本單元），再看是否真的超限（回顧單元 11 幀率/頻寬）。</div>
+
+<h2>1.14 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> Orin Nano = CSI-2 + GMSL + NVIDIA ISP，工業級平台。<br><strong>②</strong> Argus 完整調校入口，V4L2 標準介面。<br><strong>③</strong> 出圖成功是鏈路通的終極證明。</div>
+
   <h2>延伸閱讀</h2>
   <ul>
     <li>下一篇：<a href="unit-02.html">單元 2 · 影像感測器基礎</a>。</li>

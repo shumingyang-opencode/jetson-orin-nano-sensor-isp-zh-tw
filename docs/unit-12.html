@@ -59,6 +59,86 @@ EOF</pre></div>
     <ul><li>lens shading 成因。</li><li>NVIDIA LSC 網格。</li><li>LSC 需隨組合重新校正。</li><li>多感測器獨立 LSC。</li></ul>
   </div>
 
+  <h2>12.8 深入原理：cos⁴ 定律與網格插值</h2>
+<p>鏡頭邊緣光量依視角的 <strong>cos⁴</strong> 衰減——視角越大，四角越暗。若感測器各通道（R/Gr/Gb/B）衰減速度不同，還伴隨「角落偏色」。LSC 用一張增益網格補償：</p>
+<div class="pipe"><span class="step">均勻灰卡 RAW</span><span class="arr">→</span><span class="step">分通道取樣網格</span><span class="arr">→</span><span class="step">計算各節點增益</span><span class="arr">→</span><span class="step">節點間雙線性插值</span><span class="arr">→</span><span class="step">逐像素套用</span></div>
+<div class="callout"><strong>重點：</strong>網格越密越能貼合真實 shading，但節點過多會放大雜訊。工具會平衡「平滑度」與「擬合度」。</div>
+
+<h2>12.9 Worked Example：量化 lens shading</h2>
+<div class="demo-block"><div class="demo-label">拍均勻灰卡並量四角</div><pre>python3 - <<'EOF'
+import numpy as np
+# raw: 均勻灰卡 RAW（已確認 Bayer 與黑位）
+h, w = raw.shape
+def block(cx, cy):
+    return raw[cy-50:cy+50, cx-50:cx+50].mean()
+corners = [block(w//4,h//4), block(3*w//4,h//4),
+           block(w//4,3*h//4), block(3*w//4,3*h//4)]
+center  = block(w//2, h//2)
+print('中央 vs 角落比：', [round(c/center,3) for c in corners])
+# 例：[0.78, 0.80, 0.79, 0.81] → 需 ~1.27x 角落增益
+EOF</pre></div>
+<div class="callout warn"><strong>判讀規則：</strong>角落/中央比「越接近 1」越好。若 &lt; 0.85（需 &gt;1.18x 增益）屬明顯 shading；換鏡頭後此比值改變 &gt;5% → 重新校正。</div>
+
+<h2>12.10 疑難排解決策樹：暗角或角落偏色</h2>
+<div class="demo-block"><div class="demo-label">決策樹</div><pre>1. 四角均暗、中央正常？
+   ├─ 是 → 需要 LSC：拍灰卡生成網格
+   └─ 否 ┐
+2. 角落偏色（如紅角）？
+   ├─ 是 → 分通道 shading 不同：分通道 LSC
+   └─ 否 ┐
+3. LSC 後仍不均？
+   ├─ 是 → 網格太疏 / 灰卡不均勻 / 光源不均
+   └─ 否 ─→ 均勻 → ✅</pre></div>
+
+<h2>12.11 常見錯誤 / 陷阱</h2>
+<div class="callout warn"><strong>陷阱 ①：</strong>灰卡本身不均勻或光源不均 → 校正「正確」地補了一個錯的 shading——用積分球或均勻光源。</div>
+<div class="callout warn"><strong>陷阱 ②：</strong>換鏡頭 / 換感測器板後沿用舊 LSC——shading 是「鏡頭+感測器」組合特有，必須重校。</div>
+<div class="callout warn"><strong>陷阱 ③：</strong>多感測器共用一份 LSC——每顆獨立校正（個體差異）。</div>
+
+<h2>12.12 練習</h2>
+<ol>
+<li>拍一張均勻灰卡，量化中央 vs 角落比。</li>
+<li>做一次 LSC 校正並比較前後 RAW。</li>
+<li>說明「為什麼換鏡頭要重校」。</li>
+</ol>
+
+  <h2>12.13 進階：分通道 shading 與偏色</h2>
+<p>鏡頭光學衰減對不同波長不同——所以四角的「暗」其實伴隨「偏色」（例如角落偏紅）。LSC 必須<strong>分通道</strong>（R/Gr/Gb/B）給不同增益，才能同時消除暗角與偏色。</p>
+<table>
+<tr><th>通道</th><th>角色</th><th>校正重點</th></tr>
+<tr><td>R / B</td><td>紅藍通道</td><td>色彩 shading（偏色）</td></tr>
+<tr><td>Gr / Gb</td><td>綠色雙通道</td><td>亮度 shading（暗角）</td></tr>
+</table>
+<div class="callout warn"><strong>驗證：</strong>LSC 後拍灰卡，四角與中央的「各通道比」都應接近 1；只亮均勻但角落仍偏色 = 分通道沒做好。</div>
+
+<h2>12.14 快速參考：LSC 小抄</h2>
+<table>
+<tr><th>時機</th><th>動作</th></tr>
+<tr><td>換鏡頭</td><td>重校（shading 是組合特有）</td></tr>
+<tr><td>換感測器板</td><td>重校</td></tr>
+<tr><td>換模式（binning）</td><td>檢查並重校</td></tr>
+<tr><td>多感測器</td><td>每顆獨立</td></tr>
+<tr><td>邊緣比值變 &gt;5%</td><td>重校</td></tr>
+</table>
+
+<h2>12.15 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> shading 是「鏡頭+感測器」組合特有。<br><strong>②</strong> LSC 要分通道，同時解暗角與偏色。<br><strong>③</strong> 灰卡與光源要均勻，否則校正「把錯的當對的補」。</div>
+
+  <h2>12.16 深入原理：為什麼 Gr/Gb 也要分開</h2>
+<p>Bayer 的兩個綠色通道（Gr 在 R 列、Gb 在 B 列）理論上相同，但感測器製程與微透鏡會讓兩者產生細微差異——不均勻時畫面出現「棋盤格」亮暗紋（maze pattern）。</p>
+<div class="demo-block"><div class="demo-label">檢查 Gr vs Gb</div><pre>python3 - <<'EOF'
+import numpy as np
+# raw: 均勻灰卡 RAW（BGGR 範例）
+# 抽 Gr / Gb 兩通道均值
+gr = raw[0::2, 1::2].mean()   # 依 Bayer 起點調整
+gb = raw[1::2, 0::2].mean()
+print('Gr/Gb 差:', round((gr-gb)/gb*100, 2), '%')   # >2% → 需分開校正
+EOF</pre></div>
+<div class="callout warn"><strong>除錯：</strong>看到「整片細微棋盤格」別先怪 NR——先檢查 Gr/Gb 平衡；這是 LSC/黑位分通道要處理的。</div>
+
+<h2>12.17 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> cos⁴ 造成暗角，分通道造成偏色——LSC 兩者都要解。<br><strong>②</strong> LSC 是鏡頭+感測器組合特有，換了就重校。<br><strong>③</strong> 多感測器逐顆獨立校正。</div>
+
   <h2>延伸閱讀</h2>
   <ul>
     <li>下一篇：<a href="unit-13.html">單元 13 · 雜訊與降噪</a>。</li>

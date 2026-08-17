@@ -46,6 +46,81 @@
     <ul><li>NVIDIA ISP（libnvivp）區塊。</li><li>ISP 統計回饋給 AE/AWB。</li><li>「自動調校」心態。</li><li>可視性 vs 自動化的取捨。</li></ul>
   </div>
 
+  <h2>7.4 深入原理：NVIDIA ISP 管線區塊細看</h2>
+<p>NVIDIA 的 ISP（由 libnvivp + RTCPU firmware 驅動）是硬體管線，每個區塊吃前一個區塊的輸出：</p>
+<table>
+<tr><th>區塊</th><th>做什麼</th><th>調校意義</th></tr>
+<tr><td>黑位減除（black level）</td><td>扣掉無光時的偏壓</td><td>設錯暗部變色/偏黑</td></tr>
+<tr><td>LSC（lens shading）</td><td>補邊緣光量衰減</td><td>回顧單元 12</td></tr>
+<tr><td>Demosaic</td><td>Bayer → RGB</td><td>Bayer order 錯全錯</td></tr>
+<tr><td>NR（denoise）</td><td>空間+時間降噪</td><td>回顧單元 13</td></tr>
+<tr><td>CCM</td><td>色彩矩陣校正</td><td>回顧單元 11</td></tr>
+<tr><td>Gamma / tone map</td><td>亮度曲線</td><td>對比與動態範圍</td></tr>
+<tr><td>Sharpen</td><td>細節強化</td><td>回顧單元 14</td></tr>
+</table>
+<div class="callout"><strong>關鍵：</strong>這些區塊由 <strong>ISP 統計</strong>（亮度直方圖、色彩統計）驅動——AE/AWB 讀統計、算增益、回寫感測器與 ISP。這就是「自動收斂」的閉迴路。</div>
+
+<h2>7.5 深入原理：ISP 統計如何驅動 AE/AWB</h2>
+<div class="pipe"><span class="step">RAW</span><span class="arr">→</span><span class="step">統計單元（亮度/色彩）</span><span class="arr">→</span><span class="step">AE/AWB 演算法</span><span class="arr">→</span><span class="step">感測器曝光/增益 + ISP gains</span><span class="arr">→</span><span class="step">下一幀</span></div>
+<p>每一幀產出統計，演算法在數幀內把目標亮度收斂到設定值。調校者能控制的，主要是「統計的 ROI/權重」與「感測器範圍」，而非逐參數手動——這是 NVIDIA 與 RPi5 libcamera 最大的哲學差異。</p>
+<div class="callout warn"><strong>影響：</strong>場景故意做「全白牆」或「全黑」會騙統計——AE/AWB 收斂到錯誤值。實務上測試要含中間調物體或設定統計權重，否則畫面忽亮忽暗。</div>
+
+<h2>7.6 Worked Example：觀察 AE 收斂</h2>
+<div class="demo-block"><div class="demo-label">啟動預覽並切換場景</div><pre><span class="hl-c"># 用 Argus 預覽（建議有螢幕）</span>
+argus_camera --preview 1 --mode 0 --duration 20
+<span class="hl-c"># 期間：暗→亮場景切換，觀察</span>
+<span class="hl-c">#   - 亮度是否在 ~1s 內穩定（收斂快）</span>
+<span class="hl-c">#   - 是否來回振盪（震盪 = 統計/範圍問題）</span>
+<span class="hl-c"># 同時抓曝光值變化</span>
+watch -n 1 v4l2-ctl -d /dev/v4l-subdev0 -C exposure</pre></div>
+<p class="hint">正常收斂是「漸進逼近」；若你看到週期性閃爍，通常是 AE 與 AWB 交互或增益範圍卡邊界。</p>
+
+<h2>7.7 常見錯誤 / 陷阱</h2>
+<div class="callout warn"><strong>陷阱 ①：</strong>誤以為 NVIDIA ISP「不可調」就完全不調——實際上感測器 init（黑位、增益範圍、Bayer）與場景設計才是你的主戰場。</div>
+<div class="callout warn"><strong>陷阱 ②：</strong>用「已處理」輸出（NV12）判斷 ISP 區塊品質——要分區塊分析請用 RAW（單元 8），否則無從判斷是哪一級造成。</div>
+<div class="callout warn"><strong>陷阱 ③：</strong>AE 自動化很強不代表可以「亂場景亂跑」——統計被騙時輸出仍會錯。</div>
+
+<h2>7.8 練習</h2>
+<ol>
+<li>畫出你平台的 ISP 管線並標出哪幾級是「自動」。</li>
+<li>做一次暗→亮切換，記錄 AE 收斂幀數。</li>
+<li>列出你能控制的參數（透過 tegracam controls 與 Argus）。</li>
+</ol>
+
+  <h2>7.9 進階：ISP 統計的 ROI 與權重</h2>
+<p>AE/AWB 不必看整張畫面——NVIDIA 通常允許設定<strong>統計區域（ROI）與權重</strong>。例如車牌辨識只在意中央區域，就把 ROI 收窄，避免窗外過亮影響曝光。</p>
+<div class="demo-block"><div class="demo-label">ROI 設定的影響（示意）</div><pre><span class="hl-c"># 全畫面統計：大片天空 → AE 過暗</span>
+AE: 全畫面 ──→ 天空亮 → 主體黑
+<span class="hl-c"># 中央 ROI：主體為主 → 曝光正確</span>
+AE: 中央 ROI ──→ 主體亮 → 天空爆（可接受）</pre></div>
+<div class="callout warn"><strong>除錯要點：</strong>「為什麼明明亮卻很暗」先懷疑統計被大片亮部騙——調整 ROI 往往比硬改曝光更有效。</div>
+
+<h2>7.10 快速參考：ISP 分級小抄</h2>
+<table>
+<tr><th>想改什麼</th><th>對應區塊</th><th>本課單元</th></tr>
+<tr><td>暗部/亮度</td><td>黑位、gamma、tone</td><td>8 / 14</td></tr>
+<tr><td>四角暗</td><td>LSC</td><td>12</td></tr>
+<tr><td>色彩偏</td><td>AWB / CCM</td><td>11</td></tr>
+<tr><td>顆粒</td><td>NR / DPC</td><td>13</td></tr>
+<tr><td>不清晰</td><td>Sharpen</td><td>14</td></tr>
+</table>
+
+<h2>7.11 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> NVIDIA ISP 是「自動閉迴路」：統計 → 演算法 → 回寫。<br><strong>②</strong> 你的工作是感測器 init 正確 + 場景/統計合理，讓自動化收斂。<br><strong>③</strong> 分區塊分析問題請回到 RAW，別拿最終輸出猜。</div>
+
+  <h2>7.12 Worked Example：把「壞畫面」歸因到 ISP 等級</h2>
+<div class="demo-block"><div class="demo-label">由症狀反推 ISP 級</div><pre>1. 暗部浮灰/偏色 → 黑位級（回 RAW 檢查）
+2. 四角暗/偏 → LSC 級（單元 12）
+3. 色偏 → AWB/CCM 級（單元 11）
+4. 顆粒 → NR/增益級（單元 13）
+5. 不銳利/光暈 → Sharpen 級（單元 14）
+6. 亮暗爆 → tone/HDR 級（單元 14）
+7. 全錯/花屏 → 格式/管線級（單元 5/8）</pre></div>
+<div class="callout"><strong>方法：</strong>先看 RAW 排除感測器/格式問題，再依症狀往上追 ISP 級——從「最低層、最可驗證」的開始查。</div>
+
+<h2>7.13 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> ISP 管線是「統計閉迴路」，自動化是主軸。<br><strong>②</strong> 你的控制點：感測器 init、mode、統計/場景。<br><strong>③</strong> 分級歸因：RAW → 黑位 → LSC → 色彩 → NR → 美化。</div>
+
   <h2>延伸閱讀</h2>
   <ul>
     <li>下一篇：<a href="unit-08.html">單元 8 · RAW 擷取與資料格式</a>。</li>

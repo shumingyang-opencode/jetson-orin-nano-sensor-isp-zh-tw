@@ -62,6 +62,88 @@ SensorMode ... gain = 2.0</pre></div>
     <ul><li>曝光三要素。</li><li>Argus / tegracam 控制曝光。</li><li>NVIDIA AE 自動收斂。</li><li>「上限受限」除錯方向。</li></ul>
   </div>
 
+  <h2>10.8 深入原理：曝光時間的 register 位元級組合</h2>
+<p>OV 系感測器的曝光時間是 20-bit，拆在多個 register（如 0x3500/0x3501/0x3502/0x3503），組合方式依 datasheet 而定。這代表「讀回的值」要自己組合，不是單一 register 就能看。</p>
+<div class="demo-block"><div class="demo-label">組合曝光時間（示意）</div><pre><span class="hl-c"># 讀三個位元組</span>
+hi = i2cget(0x3500); mid = i2cget(0x3501); lo = i2cget(0x3502)
+exp = (hi &lt;&lt; 12) | (mid &lt;&lt; 4) | (lo &gt;&gt; 4)   <span class="hl-c"># 依 datasheet 的位元布局</span></pre></div>
+<div class="callout warn"><strong>為什麼不直接手動組合：</strong>正式流程一律用 tegracam / Argus 的曝光 control——它知道位元布局並處理量綱。這裡只是讓你理解「register 層」長什麼樣，出問題時知道去哪裡看。</div>
+
+<h2>10.9 Worked Example：手動曝光 + 增益做曝光階梯</h2>
+<div class="demo-block"><div class="demo-label">曝光階梯（確認感測器響應線性）</div><pre><span class="hl-c"># 固定增益，逐級拉曝光，看 RAW 亮度是否線性</span>
+for e in 1000 2000 4000 8000 16000 32000; do
+  v4l2-ctl -d /dev/v4l-subdev0 -c exposure=$e
+  argus_camera --mode 0 --capture-auto 1 --raw-file e$e.raw --duration 1
+done
+python3 - <<'EOF'
+import numpy as np, glob
+for f in sorted(glob.glob('e*.raw')):
+    raw = np.fromfile(f, dtype=np.uint16)
+    print(f, '亮度:', raw.mean().round(1))   # 應隨曝光倍增
+EOF</pre></div>
+<div class="callout"><strong>判讀：</strong>亮度隨曝光「倍增而倍增」= 線性良好；若高曝光處「卡住不再亮」→ 感測器飽和（過曝）或黑位設定問題。</div>
+
+<h2>10.10 疑難排解決策樹：畫面過暗</h2>
+<div class="demo-block"><div class="demo-label">決策樹</div><pre>1. AE 是否開啟？
+   ├─ 關 ─→ 曝光/增益是否太小？
+   └─ 開 ┐
+2. AE 是否卡在邊界？
+   ├─ 快門卡上限 → 場景太暗：補光 / 放寬 max_exp
+   ├─ 增益卡上限 → 補光（優先）或放寬 max_gain
+   └─ 沒卡 ┐
+3. 統計被騙？
+   ├─ 場景大片黑/白 → 換場景或設 ROI
+   └─ 正常 ┐
+4. 檢查黑位設定 → 若黑位太高，暗部被扣光 → ✅ 修正</pre></div>
+
+<h2>10.11 常見錯誤 / 陷阱</h2>
+<div class="callout warn"><strong>陷阱 ①：</strong>日光燈下用「長曝光」→ 50/60Hz banding——曝光需配合光源頻率（回顧單元 12/14 的 banding 檢查）。</div>
+<div class="callout warn"><strong>陷阱 ②：</strong>補曝光不先加增益是對的，但「補到底」仍不夠亮就要補光，硬拉數位增益只會爆雜訊。</div>
+<div class="callout warn"><strong>陷阱 ③：</strong>改變 mode（解析度/幀率）後，同一曝光數值對應的毫秒不同（回顧單元 2）——比較前先鎖定 mode。</div>
+
+<h2>10.12 練習</h2>
+<ol>
+<li>跑一次曝光階梯，確認線性範圍。</li>
+<li>手動切 AE 開/關，比較兩種出圖。</li>
+<li>寫下你的平台「max_exp / max_gain」的設定值。</li>
+</ol>
+
+  <h2>10.13 進階：banding（條紋）的成因與對策</h2>
+<p>室內日光燈以 50Hz/60Hz 閃爍。曝光時間若不是光源週期的整數倍，畫面會出現明暗條紋（banding）——這是「曝光與光源頻率不匹配」，不是感測器壞。</p>
+<table>
+<tr><th>光源頻率</th><th>安全曝光</th><th>對策</th></tr>
+<tr><td>50Hz（台灣/歐陸）</td><td>10ms 的整數倍</td><td>曝光設 10ms/20ms…</td></tr>
+<tr><td>60Hz（美國/日本）</td><td>8.33ms 的整數倍</td><td>曝光設 8.33/16.67ms…</td></tr>
+</table>
+<div class="callout warn"><strong>除錯：</strong>看到橫向條紋先確認光源與曝光；短曝光（&lt;10ms）更容易看到，長曝光反而不明顯——別誤判成雜訊或硬體問題。</div>
+
+<h2>10.14 快速參考：曝光除錯小抄</h2>
+<table>
+<tr><th>症狀</th><th>方向</th></tr>
+<tr><td>太暗且 AE 卡上限</td><td>補光 / 放寬範圍</td></tr>
+<tr><td>太亮且 AE 卡下限</td><td>減光 / 縮範圍</td></tr>
+<tr><td>忽亮忽暗</td><td>統計被騙 / 震盪：調 ROI</td></tr>
+<tr><td>橫向條紋</td><td>banding：光源頻率對齊</td></tr>
+<tr><td>高增益爆雜訊</td><td>優先曝光與光源</td></tr>
+</table>
+
+<h2>10.15 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> 順序鐵則：光源 → 曝光 → 類比增益 → 數位增益。<br><strong>②</strong> NVIDIA AE 自動收斂，但會被統計騙、會被範圍卡。<br><strong>③</strong> 比較前鎖定 mode，否則曝光「數字」不可比。</div>
+
+  <h2>10.16 Worked Example：設定 AE 範圍</h2>
+<div class="demo-block"><div class="demo-label">依場景設曝光/增益範圍</div><pre><span class="hl-c"># 1. 量場景亮度：全遮 vs 全開的 RAW 均值</span>
+dark = mean(全遮)      # ~黑位
+bright = mean(全開)    # 目標近半飽和
+<span class="hl-c"># 2. 決定目標亮度與曝光/增益範圍</span>
+<span class="hl-c">#    - 長曝光上限：依 motion blur 需求</span>
+<span class="hl-c">#    - 增益上限：依 SNR 預算（單元 13）</span>
+<span class="hl-c"># 3. 在 DTB mode 或 runtime 設 max_exp / max_gain</span>
+<span class="hl-c"># 4. 回歸：白天/夜晚/室內 都要在範圍內收斂</span></pre></div>
+<div class="callout warn"><strong>重點：</strong>範圍太寬 → AE 過度補償（亮場景過曝）；太窄 → 暗場景卡上限。範圍要「配合真實場景」來定，而不是隨便填。</div>
+
+<h2>10.17 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> 曝光三要素的優先順序是鐵則。<br><strong>②</strong> AE 自動但會卡範圍、會被統計騙。<br><strong>③</strong> banding、mode 一致性是常見陷阱。</div>
+
   <h2>延伸閱讀</h2>
   <ul>
     <li>下一篇：<a href="unit-11.html">單元 11 · 白平衡與色彩</a>。</li>

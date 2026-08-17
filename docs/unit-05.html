@@ -65,6 +65,83 @@ v4l2-ctl -d /dev/video0 --list-formats-ext</pre></div>
     <ul><li>argus_camera 拍照/預覽。</li><li>v4l2-ctl / GStreamer 取流。</li><li>「出圖 = 鏈路通」驗證。</li><li>三種常見失敗方向。</li></ul>
   </div>
 
+  <h2>5.9 深入原理：argus_camera 的參數含義</h2>
+<table>
+<tr><th>參數</th><th>含義</th><th>典型值</th></tr>
+<tr><td><code>--mode N</code></td><td>選 DTB mode（解析度/幀率）</td><td>0 = 預設</td></tr>
+<tr><td><code>--capture-auto N</code></td><td>自動連拍 N 張</td><td>1</td></tr>
+<tr><td><code>--duration N</code></td><td>取流秒數</td><td>1</td></tr>
+<tr><td><code>--preview 1</code></td><td>螢幕預覽</td><td>0/1</td></tr>
+<tr><td><code>--raw-file f.raw</code></td><td>輸出 RAW（回顧單元 8）</td><td>—</td></tr>
+</table>
+<div class="callout"><strong>為什麼 Argus 出圖是「第一步」：</strong>Argus 走完整 NVIDIA 相機棧（感測器→CSI→VI→ISP→輸出），它出得了圖代表底層全通；接著才輪到調校。反過來，若 V4L2/GStreamer 能取但 Argus 不能，問題多半在 ISP/韌體對接而非感測器。</div>
+
+<h2>5.10 Worked Example：完整取流並檢查影像</h2>
+<div class="demo-block"><div class="demo-label">OV9281 取 10 幀 NV12 並用 ffmpeg 檢查</div><pre><span class="hl-c"># 取 10 幀 NV12（1280x720）</span>
+v4l2-ctl -d /dev/video0 --set-fmt-video=width=1280,height=720,pixelformat=NV12 \
+    --stream-mmap=10 --stream-count=10 --stream-to=caps.yuv
+<span class="hl-c"># 檢查是否「全黑」或「全灰」（用 ffprobe 或直接看大小）</span>
+ls -l caps.yuv                      <span class="hl-c"># 720p NV12 = 1280*720*3/2 = 1,382,400 B/幀</span>
+ffmpeg -f rawvideo -pix_fmt nv12 -s 1280x720 -i caps.yuv -frames:v 1 out.png</pre></div>
+<p class="hint">幀大小正確但影像全黑 → 曝光/增益問題（回顧單元 10）；大小錯誤 → 格式/時序問題。</p>
+
+<h2>5.11 疑難排解決策樹：出圖失敗</h2>
+<div class="demo-block"><div class="demo-label">決策樹</div><pre>1. v4l2-ctl --list-devices 有 video0？
+   ├─ 無 ─→ 驅動/DTB（回顧單元 4）
+   └─ 有 ┐
+2. media-ctl 管線完整（感測器→CSI→VI）？
+   ├─ 斷 ─→ 管線連結設定（media-ctl -l）
+   └─ 完整 ┐
+3. 取流，檢查幀大小：
+   ├─ 錯 ─→ fourcc / width / height 宣告
+   └─ 對 ┐
+4. 影像內容：
+   ├─ 全黑 → 曝光 0 / 感測器沒輸出 / 鏡頭蓋
+   ├─ 綠紫 → pixel format 或色彩空間
+   └─ 正常 → ✅ 準備調校</pre></div>
+
+<h2>5.12 常見錯誤 / 陷阱</h2>
+<div class="callout warn"><strong>陷阱 ①：</strong>V4L2 的 <code>--set-fmt-video</code> 指定了不支援的格式時，驅動會「接受但實際沒改」——用 <code>--get-fmt-video</code> 回讀確認。</div>
+<div class="callout warn"><strong>陷阱 ②：</strong>NV12 是「已處理」輸出；要分析感測器原始品質必須取 RAW（單元 8），不能拿 NV12 談雜訊/黑位。</div>
+<div class="callout warn"><strong>陷阱 ③：</strong>GStreamer 管線卡住不一定是相機問題，可能只是沒有 <code>sync=false</code> 或 decodebin 緩衝。</div>
+
+<h2>5.13 練習</h2>
+<ol>
+<li>用 argus_camera 連拍 3 張，檢查檔案存在與大小。</li>
+<li>用 v4l2-ctl 取一幀，驗證幀大小公式。</li>
+<li>故意設錯 pixelformat，觀察錯誤訊息並記錄。</li>
+</ol>
+
+  <h2>5.14 進階：V4L2 記憶體映射（mmap）與幀緩衝</h2>
+<p>取流前，V4L2 驅動配置幀緩衝（buffer），userspace 透過 <strong>mmap</strong> 直接讀取，避免每幀複製。理解三個狀態：<strong>QUEUED（排隊給硬體）→ DONE（硬體填好）→ DEQUEUED（使用者拿走）</strong>。</p>
+<table>
+<tr><th>指令</th><th>狀態變化</th></tr>
+<tr><td><code>--stream-mmap=N</code></td><td>配置 N 個 mmap 緩衝</td></tr>
+<tr><td><code>--stream-count=N</code></td><td>取 N 幀後停止</td></tr>
+<tr><td><code>--stream-to=file</code></td><td>把 dequeued 幀寫檔</td></tr>
+</table>
+<div class="callout"><strong>除錯意義：</strong>若 buffer 不足或硬體來不及填，會掉幀或 timeout——「取 N 幀得到少於 N 幀」通常是頻寬或時序問題（回顧單元 11 幀率/頻寬）。</div>
+
+<h2>5.15 快速參考：出圖指令小抄</h2>
+<div class="demo-block"><div class="demo-label">最常用的三條</div><pre>argus_camera --mode 0 --capture-auto 1 --duration 1     <span class="hl-c"># Argus 出圖</span>
+v4l2-ctl -d /dev/video0 --stream-mmap=1 --stream-count=1 --stream-to=f.yuv
+gst-launch-1.0 v4l2src device=/dev/video0 ! fakesink</pre></div>
+
+<h2>5.16 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> 出圖成功 = 感測器 → CSI → ISP → 輸出全通。<br><strong>②</strong> 三種工具（argus / v4l2-ctl / GStreamer）代表三種使用方式，都要會。<br><strong>③</strong> 出圖後第一件事是「驗證影像正常」，才進入調校。</div>
+
+  <h2>5.17 深入原理：GStreamer 管線的 buffer 與 sync</h2>
+<p>GStreamer 的 <code>v4l2src</code> 抓 V4L2 buffer 後沿管線流動。常見卡住原因不是相機，而是 <strong>sync</strong>：顯示端等 vsync，可能讓管線「等」到看起來像凍住。</p>
+<div class="demo-block"><div class="demo-label">除錯用的 GStreamer 管線</div><pre><span class="hl-c"># fakesink：純吃 buffer，不顯示，測吞吐最快</span>
+gst-launch-1.0 v4l2src device=/dev/video0 ! fakesink
+<span class="hl-c"># 加上 sync=false 避免 vsync 卡住</span>
+gst-launch-1.0 v4l2src device=/dev/video0 ! \
+  videoconvert ! autovideosink sync=false</pre></div>
+<div class="callout warn"><strong>判斷：</strong><code>v4l2src ! fakesink</code> 能跑而顯示端卡 → 是 sync/顯示問題，不是相機問題。</div>
+
+<h2>5.18 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> Argus 出圖 = 鏈路通的終極證明。<br><strong>②</strong> v4l2-ctl 是最小工具，GStreamer 是靈活工具。<br><strong>③</strong> 卡住先分「相機」還是「顯示/sync」。</div>
+
   <h2>延伸閱讀</h2>
   <ul>
     <li>下一篇：<a href="unit-06.html">單元 6 · Sensor Bring-up 與除錯</a>。</li>

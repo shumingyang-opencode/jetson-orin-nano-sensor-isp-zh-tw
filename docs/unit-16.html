@@ -72,6 +72,93 @@
     <ul><li>GMSL 多相機與除錯重點。</li><li>Orin 調校 OV9281 完整案例。</li><li>「自動化收斂 + 只干預異常」。</li><li>最佳實踐。</li></ul>
   </div>
 
+  <h2>16.6 深入原理：GMSL 多 link 的除錯模型</h2>
+<p>MAX96712 一顆 deserializer 有多個 link，每條 link 獨立成一路影像。除錯模型：<strong>每一路都是「獨立的 CSI-2 通道 + 獨立的 I2C 通道 + 獨立的 lock 狀態」</strong>——一條 lock 不代表全部 lock。</p>
+<table>
+<tr><th>面向</th><th>單 link</th><th>多 link</th></tr>
+<tr><td>I2C</td><td>一顆感測器</td><td>每路 remap 到不同位址</td></tr>
+<tr><td>lock</td><td>一組 serdes</td><td>逐路確認</td></tr>
+<tr><td>CSI</td><td>一組 lane</td><td>多 virtual channel / 多 CSI 介面</td></tr>
+<tr><td>DTB</td><td>一個 camera 節點</td><td>每個 camera 節點各宣告</td></tr>
+</table>
+<div class="callout warn"><strong>實務紀律：</strong>多感測器「逐顆 bring-up」——先讓第 1 顆完整出圖並調校，再上第 2 顆；一次只碰一顆，否則錯誤無法歸因。</div>
+
+<h2>16.7 Worked Example：多感測器逐步驗證</h2>
+<div class="demo-block"><div class="demo-label">兩顆 OV9281 的驗證腳本</div><pre><span class="hl-c"># 1. 兩路 serdes 都 lock？</span>
+<span class="hl-c">#    （讀 MAX96712 各 link 的 lock register，vendor 工具最佳）</span>
+<span class="hl-c"># 2. 兩顆 ID 都讀得到（remap 後位址不同）</span>
+sudo i2cget -y 0 0x36 0x300a   <span class="hl-c"># cam0 ID</span>
+sudo i2cget -y 0 0x56 0x300a   <span class="hl-c"># cam1 ID（remap 範例）</span>
+<span class="hl-c"># 3. 兩路 media 管線</span>
+media-ctl -p -d /dev/media0
+media-ctl -p -d /dev/media1
+<span class="hl-c"># 4. 逐路出圖</span>
+v4l2-ctl -d /dev/video0 --stream-mmap=1 --stream-count=1 --stream-to=cam0.raw
+v4l2-ctl -d /dev/video1 --stream-mmap=1 --stream-count=1 --stream-to=cam1.raw</pre></div>
+<p class="hint">兩路都出圖後，才談同步（frame sync）與共同調校。同步是進階題——先確保「每一路都獨立正確」。</p>
+
+<h2>16.8 疑難排解決策樹：多感測器其中一路沒影像</h2>
+<div class="demo-block"><div class="demo-label">決策樹</div><pre>1. 壞的那路 serdes 有 lock？
+   ├─ 無 → 線材/接頭/電源（該路專屬）
+   └─ 有 ┐
+2. 該路感測器 ID 讀得到？
+   ├─ 否 → I2C remap 衝突 / 通道未切
+   └─ 是 ┐
+3. 該路 DTB 節點 probe？
+   ├─ 否 → DTB mode / 電源 / MCLK（該路專屬）
+   └─ 是 ┐
+4. 該路 video device 出圖？
+   ├─ 否 → media 管線 / CSI 配置
+   └─ 是 → ✅ 繼續下一路</pre></div>
+
+<h2>16.9 常見錯誤 / 陷阱</h2>
+<div class="callout warn"><strong>陷阱 ①：</strong>多顆同型感測器 I2C 位址相同 → 全部讀同一顆、或互相干擾——務必 remap 成不同位址。</div>
+<div class="callout warn"><strong>陷阱 ②：</strong>共用一份 LSC/AWB 校正給所有感測器——每顆獨立校正（個體差異）。</div>
+<div class="callout warn"><strong>陷阱 ③：</strong>逐顆 bring-up 前就把參數串在一起改——出錯無法歸因。一次只動一顆。</div>
+
+<h2>16.10 練習</h2>
+<ol>
+<li>列出你平台「每顆感測器」的：位址、lock 驗證、media 節點。</li>
+<li>寫一份「多感測器 bring-up 檢查表」。</li>
+<li>描述一顆壞掉時的除錯順序。</li>
+</ol>
+
+  <h2>16.11 進階：多感測器的同步與對齊</h2>
+<p>多感測器應用常需要「同時曝光」：GMSL 有硬體 frame sync 機制（多顆 serializer 共用觸發），或用軟體對齊幀時間戳。決定要不要同步的判準：<strong>你的演算法是否假設「同一瞬間」的影像</strong>。</p>
+<table>
+<tr><th>場景</th><th>需要硬體同步？</th><th>理由</th></tr>
+<tr><td>3D 立體視覺</td><td>是</td><td>左右眼需同一瞬間</td></tr>
+<tr><td>多視角監控</td><td>不必</td><td>各自獨立即可</td></tr>
+<tr><td>環視系統</td><td>視設計</td><td>拼接需要對齊</td></tr>
+</table>
+<div class="callout warn"><strong>實務：</strong>先讓多顆「各自正確出圖」，再談同步——沒有單顆穩定，同步是空談。</div>
+
+<h2>16.12 快速參考：多感測器工作流</h2>
+<div class="demo-block"><div class="demo-label">SOP</div><pre>1. 硬體：每路 lane / I2C / 電源 獨立確認
+2. serdes：逐路 lock
+3. I2C：remap 避開位址衝突，逐顆讀 ID
+4. DTB：每顆 camera 節點正確
+5. 逐顆出圖驗證
+6. 逐顆 RAW 分析（黑位/Bayer/缺陷）
+7. 逐顆獨立調校（LSC/AWB…）
+8. 最後才處理同步與共同場景
+9. 回歸：壞一顆能立即歸因</pre></div>
+
+<h2>16.13 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> 多 link = 多組「lock / I2C / CSI / DTB」，逐路獨立除錯。<br><strong>②</strong> 多顆同型感測器務必 remap I2C 位址。<br><strong>③</strong> 逐顆 bring-up 與調校，同步是最後一步。</div>
+
+  <h2>16.14 Worked Example：驗證多感測器「同時」</h2>
+<div class="demo-block"><div class="demo-label">比對兩路幀的時間戳</div><pre><span class="hl-c"># 兩路各取 10 幀，記錄時間戳</span>
+v4l2-ctl -d /dev/video0 --stream-mmap=10 --stream-count=10 --stream-to=c0.raw
+v4l2-ctl -d /dev/video1 --stream-mmap=10 --stream-count=10 --stream-to=c1.raw
+<span class="hl-c"># 比較時間戳差：</span>
+<span class="hl-c">#   - 固定小偏移 → 軟體對齊即可</span>
+<span class="hl-c">#   - 差異隨機/漂移 → 需硬體 frame sync</span></pre></div>
+<div class="callout warn"><strong>判讀：</strong>若兩路「各自穩定」但彼此漂移（如差幾毫秒到幾十毫秒），3D/拼接類應用就需要硬體同步；只做多視角監控則可接受。</div>
+
+<h2>16.15 看完本單元該記住的三件事</h2>
+<div class="callout"><strong>①</strong> 多 link = 多組獨立除錯域。<br><strong>②</strong> 位址 remap 是防衝突的第一關。<br><strong>③</strong> 逐顆穩定後才談同步。</div>
+
   <h2>延伸閱讀</h2>
   <ul>
     <li>回顧全站：<a href="index.html">單元教學目錄</a>。</li>
