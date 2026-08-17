@@ -247,6 +247,118 @@ EOF</pre></div>
 <li>- [ ] 完成一次自動化出圖驗證（capture_verify.sh）並得到 PASS。</li>
 </ul>
 
+  <h2>5.17 Register 位元級完整工作流：Argus 設定曝光 + 出圖驗證</h2>
+<table class="reg-table">
+<tr><th>步驟</th><th>Command</th><th>驗證目標</th><th>預期結果</th></tr>
+<tr><td>1. 設模式</td><td>argus_camera --camera-id 0 --mode 0</td><td>選擇正確 mode</td><td>mode 0 載入成功</td></tr>
+<tr><td>2. 設曝光</td><td>--exposure-value 0.016</td><td>手動曝光</td><td>曝光設為 16ms</td></tr>
+<tr><td>3. 設增益</td><td>--gain-value 4.0</td><td>手動增益</td><td>增益設為 4x</td></tr>
+<tr><td>4. 擷取</td><td>--capture-auto 1 --duration 1</td><td>取 1 幀</td><td>輸出 .raw 檔案</td></tr>
+<tr><td>5. 驗證大小</td><td>ls -l *.raw</td><td>檔案大小</td><td>width × height × 2</td></tr>
+<tr><td>6. 亮度確認</td><td>Python mean() 計算</td><td>非全黑/全白</td><td>mean 在 100-600 範圍</td></tr>
+</table>
+<div class="demo-block"><div class="demo-label">Argus 完整 Pipeline：出圖 → 驗證 → 判斷</div><pre><span class="hl-c">#!/bin/bash</span>
+<span class="hl-c"># argus_first_frame.sh — 第一幀完整驗證</span>
+
+echo "=== Step 1: List cameras ==="
+argus_camera --list-cameras
+echo ""
+
+echo "=== Step 2: Capture with manual exposure ==="
+argus_camera --camera-id 0 --mode 0 \
+  --exposure-value 0.016 --gain-value 4.0 \
+  --capture-auto 1 --duration 1 --file-type raw \
+  --output-dir /tmp/frame_test
+
+echo "=== Step 3: Verify output ==="
+RAW_FILE=$(find /tmp/frame_test -name "*.raw" | head -1)
+if [ -z "$RAW_FILE" ]; then
+  echo "FAIL: No RAW file generated"
+  exit 1
+fi
+
+SIZE=$(stat -f%z "$RAW_FILE" 2>/dev/null || stat --format=%s "$RAW_FILE")
+echo "RAW file: $RAW_FILE"
+echo "Size: $SIZE bytes"
+
+<span class="hl-c"># OV9281 mode 0: 1280x800, 10-bit → 1280*800*2 = 2,048,000</span>
+EXPECTED=2048000
+if [ "$SIZE" -eq "$EXPECTED" ]; then
+  echo "SIZE CHECK: PASS (expected $EXPECTED)"
+else
+  echo "SIZE CHECK: FAIL (expected $EXPECTED, got $SIZE)"
+fi
+
+echo "=== Step 4: Brightness check ==="
+python3 -c "
+import numpy as np, sys
+data = np.fromfile('$RAW_FILE', dtype=np.uint16)
+print(f'mean={data.mean():.1f} min={data.min()} max={data.max()}')
+if data.mean() < 10: print('VERDICT: TOO DARK — check exposure/mode')
+elif data.mean() > 600: print('VERDICT: TOO BRIGHT — check gain')
+else: print('VERDICT: OK')
+"</pre></div>
+
+  <h2>5.18 多層疑難排解決策樹</h2>
+<div class="demo-block"><div class="demo-label">決策樹 A：Argus 出全黑</div><pre>1. v4l2-ctl --stream-mmap=1 --stream-count=1 --stream-to=raw 取到檔？
+   ├─ 否 ─→ 退回感測器驅動問題（見單元 4）
+   └─ 是 ┐
+2. argus_camera 有 output？（-o /tmp/test）
+   ├─ 有 但 0 bytes ─→ argus 設定錯誤（mode 或 fourcc）
+   ├─ 無 任何輸出 ─→ argus 輸出路徑權限問題
+   └─ 有且有大小 ┐
+3. RAW 數據 mean < 10？
+   ├─ 是 ─→ 曝光未生效（ATE 模式？）→ 檢查 mode 曝光範圍
+   └─ 否 ─→ 輸出格式/色彩空間錯誤</pre></div>
+
+<div class="demo-block"><div class="demo-label">決策樹 B：Argus 開會話失敗</div><pre>1. "Session create failed"？
+   ├─ 是 ┐
+   │   2. 有其他 Argus 程序在跑？
+   │      ├─ 是 → kill 舊程序
+   │      └─ 否 → ISP bandwidth 超限（一次開太多路？）
+   └─ 否 ┐
+2. "No cameras available"？
+   ├─ 是 → driver 沒 probe 成功（回單元 4）
+   └─ 否 → 驅動版本與 Argus API 版本不匹配</pre></div>
+
+  <h2>5.19 量測驗證完整 SOP</h2>
+<ol>
+<li><strong>前置確認</strong>：<code>v4l2-ctl --list-devices</code> → /dev/video0 存在。</li>
+<li><strong>argus 輸出目錄</strong>：建立 <code>/tmp/frame_test</code>；確認寫入權限。</li>
+<li><strong>手動曝光出圖</strong>：<code>argus_camera --camera-id 0 --mode 0 --exposure-value 0.016 --gain-value 4.0 --capture-auto 1 --duration 1 --file-type raw -o /tmp/frame_test</code>。</li>
+<li><strong>RAW 尺寸</strong>：<code>ls -l /tmp/frame_test/*.raw</code> → 預期 width × height × 2 bytes。</li>
+<li><strong>亮度檢查</strong>：Python <code>np.fromfile(raw, uint16).mean()</code> → 應在 100-600 範圍。</li>
+<li><strong>白卡測試</strong>：拍攝 X-Rite 灰卡，取 RAW → 檢查三通道均勻度。</li>
+<li><strong>亮度穩定性</strong>：手動曝光下連續取 30 幀，量每幀 mean ± std；std &lt; 2 表示亮度穩定。</li>
+</ol>
+<div class="callout"><strong>判讀標準：</strong>RAW 大小正確 + mean 在合理範圍 + 三通道均勻 + 30 幀亮度穩定 = 「我的第一張相機圖片」里程碑達成。</div>
+
+  <h2>5.20 四平台终极對照</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th><th>推薦</th></tr>
+<tr><td>出圖工具</td><td>argus_camera</td><td>rpicam / libcamera</td><td>v4l2-ctl</td><td>argus / Holoscan</td><td>各有首選</td></tr>
+<tr><td>RAW 輸出</td><td>--file-type raw</td><td>--raw / libcamera-raw</td><td>--stream-to</td><td>Holoscan 管線</td><td>格式相同</td></tr>
+<tr><td>曝光控制</td><td>--exposure-value</td><td>--shutter (µs)</td><td>V4L2 controls</td><td>SensorMode</td><td>單位不同</td></tr>
+<tr><td>增益控制</td><td>--gain-value</td><td>--gain</td><td>V4L2 controls</td><td>SensorMode</td><td>全平台可調</td></tr>
+<tr><td>亮度分析</td><td colspan="4">Python numpy 全平台共用</td><td>平台無關</td></tr>
+<tr><td>Argus 版本</td><td>JetPack 版本決定</td><td>無 Argus</td><td>無 Argus</td><td>同 Orin</td><td>注意 API 版本</td></tr>
+<tr><td>第一幀里程碑</td><td colspan="4">出圖 + 大小正確 + 亮度合理</td><td>全平台相同</td></tr>
+</table>
+
+  <h2>5.21 完整 Bring-up 專案 Checklist</h2>
+<ul>
+<li>- [ ] argus_camera --list-cameras 能看到相機</li>
+<li>- [ ] argus_camera 手動曝光（0.016s）+ 增益（4.0）出圖</li>
+<li>- [ ] RAW 檔案大小 = width × height × 2 bytes</li>
+<li>- [ ] RAW mean 在 100-600 範圍（非全黑/全白）</li>
+<li>- [ ] v4l2-ctl 取一幀，大小與 argus 一致</li>
+<li>- [ ] 白卡 RAW 三通道均勻度 &lt; 5%</li>
+<li>- [ ] 連續 30 幀手動曝光，亮度 std &lt; 2</li>
+<li>- [ ] 記錄 argus 版本、mode 編號、曝光範圍</li>
+<li>- [ ] 建立出圖腳本供後續單元重複使用</li>
+<li>- [ ] 拍攝確認存檔路徑可寫入（/tmp 或指定目錄）</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-04.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 4 · 平台相機框架與驅動</div></a>
     <a class="np-next" href="unit-06.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 6 · Sensor Bring-up 與除錯</div></a>

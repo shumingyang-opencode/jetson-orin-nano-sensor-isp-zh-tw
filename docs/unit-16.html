@@ -280,10 +280,124 @@ EOF
 <li>- [ ] 能寫出你平台每顆感測器的 lock / 位址 / media 節點清單。</li>
 </ul>
 
+  <h2>16.14 Register 位元級完整工作流：多感測器 I2C remap 全路驗證</h2>
+<table class="reg-table">
+<tr><th>步驟</th><th>Command</th><th>驗證目標</th><th>預期結果</th></tr>
+<tr><td>1. deserializer ID</td><td>i2cget 0x48</td><td>MAX96712 活著</td><td>讀到 ID</td></tr>
+<tr><td>2. lock 狀態</td><td>i2cget 0x48 0x0013</td><td>4 路全 lock</td><td>bit 0-3 全 1</td></tr>
+<tr><td>3. link0 alias</td><td>i2cset 0x48 0x0010 0x36</td><td>link0 remap</td><td>設定成功</td></tr>
+<tr><td>4. link1 alias</td><td>i2cset 0x48 0x0011 0x37</td><td>link1 remap</td><td>設定成功</td></tr>
+<tr><td>5. link2 alias</td><td>i2cset 0x48 0x0012 0x38</td><td>link2 remap</td><td>設定成功</td></tr>
+<tr><td>6. link3 alias</td><td>i2cset 0x48 0x0013 0x39</td><td>link3 remap</td><td>設定成功</td></tr>
+<tr><td>7. 逐路讀 ID</td><td>i2ctransfer 各 alias</td><td>感測器可達</td><td>各路 0x92</td></tr>
+</table>
+<div class="demo-block"><div class="demo-label">多感測器完整 bring-up 腳本</div><pre><span class="hl-c">#!/bin/bash</span>
+<span class="hl-c"># multi_sensor_bringup.sh — 四路 OV9281 逐路驗證</span>
+DESER=0x48; BUS=0
+ALIASES=(0x36 0x37 0x38 0x39)
+
+echo "=== Deserializer Check ==="
+i2cget -y $BUS $DESER && echo "MAX96712: OK" || echo "MAX96712: FAIL"
+
+echo "=== Lock Status ==="
+lock=$(i2cget -y $BUS $DESER 0x0013)
+echo "Lock register: 0x$(printf '%02x' $lock)"
+for i in 0 1 2 3; do
+  bit=$(( (lock >> i) & 1 ))
+  echo "  link$i: $([ $bit -eq 1 ] && echo 'LOCKED' || echo 'UNLOCKED')"
+done
+
+echo "=== I2C Remap ==="
+for i in 0 1 2 3; do
+  i2cset -y $BUS $DESER $((0x0010 + i)) ${ALIASES[$i]}
+  echo "link$i: remote 0x36 → local 0x$(printf '%x' ${ALIASES[$i]})"
+done
+
+echo "===逐路 Sensor ID ==="
+FAIL=0
+for alias in "${ALIASES[@]}"; do
+  id=$(i2ctransfer -y $BUS w2@0x$alias 0x30 0x0a r1 2>/dev/null)
+  if [ "0x$id" = "0x92" ]; then
+    echo "0x$alias: OK (ID=0x$id)"
+  else
+    echo "0x$alias: FAIL (ID=0x$id)"
+    FAIL=$((FAIL+1))
+  fi
+done
+
+echo ""
+[ $FAIL -eq 0 ] && echo "ALL SENSORS: PASS" || echo "FAILURES: $FAIL/4"</pre></div>
+
+  <h2>16.15 多層疑難排解決策樹</h2>
+<div class="demo-block"><div class="demo-label">決策樹 A：多感測器同步失敗</div><pre>1. N 路同時開，部分路失敗？
+   ├─ 是 ┐
+   │   2. 哪些路失敗？（逐路 bring-up 定位）
+   │      ├─ 特定路 → 該路硬體問題（線材/端接/電源）
+   │      └─ 全部路 → deserializer 問題（電源/韌體）
+   └─ 否 ┐
+2. VI channel 不足？
+   ├─ 是 → Orin Nano 最多 3 路
+   │       → 減路 / 降解析度 / 用外部 ISP
+   └─ 否 → ISP bandwidth 超限
+           → 降單路解析度/幀率</pre></div>
+
+<div class="demo-block"><div class="demo-label">決策樹 B：車載多攝同步時間差</div><pre>1. 前後攝時間差 > 50ms？
+   ├─ 是 → GMSL link 延遲不同
+   │       → 調整各路 trigger delay
+   └─ 否 ┐
+2. 偶爾一幀延遲？
+   ├─ 是 → OS scheduling jitter
+   │       → 用 RT thread + isolated core
+   └─ 否 → 同步正常</pre></div>
+
+  <h2>16.16 量測驗證完整 SOP</h2>
+<ol>
+<li><strong>硬體確認</strong>：MAX96712 lock 全 1（4 路）。</li>
+<li><strong>I2C remap</strong>：設定 4 路 alias（0x36/0x37/0x38/0x39）。</li>
+<li><strong>逐路 ID</strong>：i2ctransfer 讀各路感測器 ID。</li>
+<li><strong>逐路出圖</strong>：每路 argus/v4l2-ctl 出圖 → 驗證大小。</li>
+<li><strong>同時出圖</strong>：4 路同時開 → 記錄掉幀數。</li>
+<li><strong>時間同步</strong>：多攝同幀時間戳 → 時間差 &lt; 1 frame。</li>
+<li><strong>頻寬估算</strong>：Σ(W×H×bits×fps) &lt; 可用頻寬 × 0.8。</li>
+<li><strong>案例實現</strong>：選定應用（車載/監控/醫療/農業）→ 記錄需求與實作。</li>
+</ol>
+<div class="callout"><strong>判讀標準：</strong>4 路全 lock ✓、逐路 ID ✓、同時出圖掉幀 &lt; 5% ✓、時間差 &lt; 1 frame ✓ = 多感測器完成。</div>
+
+  <h2>16.17 四平台终极對照</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th><th>推薦</th></tr>
+<tr><td>最多感測器數</td><td>4（GMSL）</td><td>2（CSI）</td><td>1</td><td>8+（GMSL）</td><td>多路 → Thor</td></tr>
+<tr><td>GMSL 多路</td><td>✅ MAX96712</td><td>❌</td><td>❌</td><td>✅ 內建</td><td>GMSL → Orin/Thor</td></tr>
+<tr><td>I2C remap</td><td>✅ 必要</td><td>❌</td><td>❌</td><td>✅ 必要</td><td>GMSL 專用</td></tr>
+<tr><td>同步精度</td><td>~1 frame</td><td>~2 frames</td><td>N/A</td><td>sub-frame</td><td>精準同步 → Thor</td></tr>
+<tr><td>案例適用</td><td>車載/ADAS</td><td>雙目視覺</td><td>單路應用</td><td>自動駕駛</td><td>各有定位</td></tr>
+<tr><td>頻寬</td><td>~1.5 Gbps</td><td>~800 Mbps</td><td>~400 Mbps</td><td>>3 Gbps</td><td>高頻寬 → Thor</td></tr>
+<tr><td>韌體升級</td><td>MAX96712 flash</td><td>❌</td><td>❌</td><td>OTA</td><td>各有方式</td></tr>
+<tr><td>量產成本</td><td>中</td><td>低</td><td>最低</td><td>高</td><td>成本敏感 → RPi5</td></tr>
+<tr><td>學習曲線</td><td>高</td><td>中</td><td>低</td><td>極高</td><td>入門 → RPi5</td></tr>
+</table>
+
+  <h2>16.18 完整 Bring-up 專案 Checklist</h2>
+<ul>
+<li>- [ ] MAX96712 deserializer ID 確認</li>
+<li>- [ ] 4 路 GMSL lock 全 1</li>
+<li>- [ ] I2C remap 4 路設定完成</li>
+<li>- [ ] 逐路讀感測器 ID 成功</li>
+<li>- [ ] 逐路出圖成功（大小正確）</li>
+<li>- [ ] 4 路同時出圖，掉幀 &lt; 5%</li>
+<li>- [ ] 時間同步精度量測 &lt; 1 frame</li>
+<li>- [ ] 頻寬估算 &lt; 可用頻寬 80%</li>
+<li>- [ ] 選定案例應用並記錄需求</li>
+<li>- [ ] 案例原型搭建並驗證</li>
+<li>- [ ] 記錄所有驗證結果至多感測器報告</li>
+<li>- [ ] 建立多感測器 bring-up 標準流程文件</li>
+</ul>
+
   <div class="next-prev">
-    <a href="unit-15.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 15 · 四平台影像調校功能比較</div></a>
-    <a class="np-next" href="index.html"><div class="np-label">課程完成 →</div><div class="np-name">回首頁 · 單元教學目錄</div></a>
+    <a href="unit-15.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 15 · 多平台影像調校功能比較</div></a>
+    <a class="np-next" href="index.html"><div class="np-label">回到目錄 →</div><div class="np-name">單元教學目錄</div></a>
   </div>
+</div>
 </div>
 
 <footer>這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>

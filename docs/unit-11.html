@@ -237,10 +237,114 @@ argus_camera --mode 0 --raw-file cc_5500k.raw --duration 1
 <li>- [ ] 能寫出你的「光源 → gains / CCM」對照表。</li>
 </ul>
 
+  <h2>11.13 Register 位元級完整工作流：AWB 驗證——灰卡 + 色偏量測</h2>
+<table class="reg-table">
+<tr><th>步驟</th><th>Command / 量測</th><th>預期（AWB ON）</th><th>預期（AWB OFF）</th></tr>
+<tr><td>1. 灰卡出圖</td><td>argus + X-Rite 灰卡</td><td>R ≈ G ≈ B</td><td>色偏（依光源）</td></tr>
+<tr><td>2. RGB ratio</td><td>mean(R)/mean(G), mean(B)/mean(G)</td><td>均 ≈ 1.0</td><td>偏離 1.0</td></tr>
+<tr><td>3. 色溫估計</td><td>色度座標 → 色溫</td><td>≈ 光源色溫</td><td>偏離光源色溫</td></tr>
+<tr><td>4. 30 幀穩定性</td><td>std of RGB ratio</td><td>std &lt; 0.02</td><td>固定（std ≈ 0）</td></tr>
+</table>
+<div class="demo-block"><div class="demo-label">AWB 完整驗證腳本</div><pre><span class="hl-c">#!/usr/bin/env python3</span>
+<span class="hl-c"># awb_verify.py — 驗證白平衡功能</span>
+import numpy as np, subprocess, glob
+
+def capture_and_analyze(label):
+    subprocess.run([
+        "argus_camera", "--camera-id", "0", "--mode", "0",
+        "--capture-auto", "1", "--duration", "1",
+        "--output-dir", f"/tmp/awb_{label}"
+    ], capture_output=True)
+    raw = glob.glob(f"/tmp/awb_{label}/*.raw")
+    if not raw:
+        return None
+    data = np.fromfile(raw[0], dtype=np.uint16).reshape(800, 1280)
+    r, g, b = data[0::2, 0::2], data[0::2, 1::2], data[1::2, 0::2]
+    return {"R": r.mean(), "G": g.mean(), "B": b.mean()}
+
+<span class="hl-c"># Test: Gray card under daylight</span>
+result = capture_and_analyze("graycard")
+if result:
+    rg = result["R"] / result["G"]
+    bg = result["B"] / result["G"]
+    print(f"R/G = {rg:.3f} (should be ~1.000)")
+    print(f"B/G = {bg:.3f} (should be ~1.000)")
+    
+    deviation = abs(rg - 1.0) + abs(bg - 1.0)
+    if deviation < 0.05:
+        print("AWB VERDICT: PASS (neutral)")
+    elif deviation < 0.10:
+        print("AWB VERDICT: MARGINAL (slight cast)")
+    else:
+        print("AWB VERDICT: FAIL (color cast)")</pre></div>
+
+  <h2>11.14 多層疑難排解決策樹</h2>
+<div class="demo-block"><div class="demo-label">決策樹 A：AWB 偏色</div><pre>1. 灰卡拍出偏暖（R > G > B）？
+   ├─ 是 → 色溫估計過低 → 提高色溫
+   │       或 CCM 暖色係數過高 → 降暖色增益
+   └─ 否 ┐
+2. 灰卡拍出偏冷（B > G > R）？
+   ├─ 是 → 色溫估計過高 → 降低色溫
+   │       或 CCM 冷色係數過高 → 降冷色增益
+   └─ 否 ┐
+3. 灰卡拍出偏綠？
+   ├─ 是 → CCM 綠色通道增益過高
+   │       或 AWB 色溫估計錯誤
+   └─ 否 → 色彩正常</pre></div>
+
+<div class="demo-block"><div class="demo-label">決策樹 B：AWB 跳動</div><pre>1. 畫面色彩快速閃爍？
+   ├─ 是 → AWB 收斂速度太快 → 降 speed
+   │       或光源 flicker → 開 flicker rejection
+   └─ 否 ┐
+2. 色彩偶爾突然偏移？
+   ├─ 是 → AWB 參考區域有異常色 → 限定 ROI
+   └─ 否 ┐
+3. 色彩穩定但不準？
+   ├─ 是 → 校正不足 → 執行白平衡校正
+   └─ 否 → AWB 正常</pre></div>
+
+  <h2>11.15 量測驗證完整 SOP</h2>
+<ol>
+<li><strong>校正用灰卡</strong>：X-Rite ColorChecker 或 18% 灰卡，均勻打光（色溫 5500K）。</li>
+<li><strong>AWB 出圖</strong>：<code>argus_camera --capture-auto 1 --duration 1</code> → 灰卡 RAW。</li>
+<li><strong>RGB ratio</strong>：R/G、B/G 應均 ≈ 1.000；偏離 &gt; 0.05 需追查。</li>
+<li><strong>色溫估計</strong>：由色度座標推算色溫；應 ≈ 光源色溫（5500K）。</li>
+<li><strong>色彩穩定性</strong>：30 幀，每幀算 RGB ratio；std &lt; 0.02 = PASS。</li>
+<li><strong>CCM 驗證</strong>：若可調，修改 CCM 一個係數 → 出圖 → 確認色彩變化。</li>
+<li><strong>AWB OFF 比較</strong>：手動固定色溫 → 與 AWB 自動結果比對。</li>
+</ol>
+<div class="callout"><strong>判讀標準：</strong>灰卡 RGB ratio 均 ≈ 1.0 ✓、色溫估計準確 ✓、30 幀 std &lt; 0.02 ✓ = AWB 正常。</div>
+
+  <h2>11.16 四平台终极對照</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th><th>推薦</th></tr>
+<tr><td>AWB 實作</td><td>3A library</td><td>libcamera 3A</td><td>無 / 有限</td><td>3A + Holoscan</td><td>各有實現</td></tr>
+<tr><td>AWB 色溫範圍</td><td>2300-10000K</td><td>2500-7500K</td><td>有限</td><td>2000-12000K</td><td>全光譜 → Thor</td></tr>
+<tr><td>CCM 可調</td><td>✅ 3×3 矩陣</td><td>✅ tuning file</td><td>❌</td><td>✅ + AI</td><td>校正 → Orin</td></tr>
+<tr><td>AWB 穩定性</td><td>良好</td><td>良好</td><td>差</td><td>最佳</td><td>室外 → Orin/Thor</td></tr>
+<tr><td>校正工具</td><td>NVIDIA tuning</td><td>libcamera 向導</td><td>無</td><td>NVIDIA + Holoscan</td><td>各有工具</td></tr>
+<tr><td>多光源支援</td><td>✅ 混合光源</td><td>✅ 混合光源</td><td>有限</td><td>✅ + AI 識別</td><td>複雜光源 → Thor</td></tr>
+<tr><td>AWB 學習曲線</td><td>中高</td><td>中</td><td>低</td><td>高</td><td>入門 → RPi5</td></tr>
+</table>
+
+  <h2>11.17 完整 Bring-up 專案 Checklist</h2>
+<ul>
+<li>- [ ] 灰卡 + 5500K 光源，AWB 自動出圖</li>
+<li>- [ ] RGB ratio R/G、B/G 均 ≈ 1.000（偏離 &lt; 0.05）</li>
+<li>- [ ] 色溫估計 ≈ 光源色溫</li>
+<li>- [ ] 30 幀色彩穩定性 std &lt; 0.02</li>
+<li>- [ ] 嘗試 CCM 一個係數修改，確認色彩變化</li>
+<li>- [ ] AWB OFF 比較，確認自動 vs 手動差異</li>
+<li>- [ ] 不同光源下測試（日光/鎢絲燈/LED）</li>
+<li>- [ ] 記錄 AWB 參數（色溫範圍/speed/hysteresis）</li>
+<li>- [ ] 產出 AWB 功能報告（穩定性/色準/校正建議）</li>
+</ul>
+
   <div class="next-prev">
-    <a href="unit-10.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 10 · 曝光與自動曝光（AE）</div></a>
-    <a class="np-next" href="unit-12.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 12 · 鏡頭陰影校正（LSC）</div></a>
+    <a href="unit-10.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 10 · 曝光與自動曝光</div></a>
+    <a class="np-next" href="unit-12.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 12 · 鏡頭陰影校正</div></a>
   </div>
+</div>
 </div>
 
 <footer>這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>

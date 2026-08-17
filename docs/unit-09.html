@@ -233,10 +233,115 @@ EOF
 <li>- [ ] 能用決策流程選出適合你專案的平台。</li>
 </ul>
 
+  <h2>9.13 Register 位元級完整工作流：NVIDIA ISP tuning 實作</h2>
+<table class="reg-table">
+<tr><th>步驟</th><th>操作</th><th>工具/命令</th><th>預期結果</th></tr>
+<tr><td>1. 找 tuning 路徑</td><td>ls /opt/nvidia/</td><td>tuning 資料夾</td><td>camera / tegracam 資料夾</td></tr>
+<tr><td>2. 備份原檔</td><td>cp 原檔 原檔.bak</td><td>備份</td><td>備份成功</td></tr>
+<tr><td>3. 修改參數</td><td>vi / nano</td><td>調整值</td><td>參數更新</td></tr>
+<tr><td>4. 重載驅動</td><td>rmmod + modprobe</td><td>重載</td><td>無 error</td></tr>
+<tr><td>5. 驗證效果</td><td>argus_camera 出圖</td><td>拍照</td><td>效果改變</td></tr>
+</table>
+<div class="demo-block"><div class="demo-label">NVIDIA tuning 完整工作流</div><pre><span class="hl-c">#!/bin/bash</span>
+<span class="hl-c"># nvidia_tuning.sh — NVIDIA ISP 調校流程</span>
+
+echo "=== Step 1: Find tuning files ==="
+find /opt/nvidia/ -name "*.xml" -o -name "*.json" 2>/dev/null | head -20
+echo ""
+
+echo "=== Step 2: Backup ==="
+TUNING_DIR="/opt/nvidia/tegra/isp/tuning"
+cp "$TUNING_DIR/original.xml" "$TUNING_DIR/original.xml.bak" 2>/dev/null
+
+echo "=== Step 3: Modify ==="
+<span class="hl-c"># 例如：調整 brightness 增益（假設 XML 格式）</span>
+sed -i 's/brightness_gain="1.0"/brightness_gain="1.5"/' "$TUNING_DIR/tuning.xml"
+
+echo "=== Step 4: Reload ==="
+sudo rmmod tegra_vi && sudo modprobe tegra_vi
+sleep 1
+
+echo "=== Step 5: Verify ==="
+argus_camera --camera-id 0 --mode 0 \
+  --exposure-value 0.016 --gain-value 4.0 \
+  --capture-auto 1 --duration 1 \
+  --output-dir /tmp/tuning_test
+
+echo "=== Step 6: Compare ==="
+python3 -c "
+import numpy as np
+orig = np.fromfile('/tmp/original_test.raw', dtype=np.uint16).mean()
+new = np.fromfile('/tmp/tuning_test/*.raw', dtype=np.uint16).mean()
+print(f'Original mean: {orig:.1f}')
+print(f'After tuning mean: {new:.1f}')
+print(f'Change: {(new-orig)/orig*100:.1f}%')
+"</pre></div>
+
+  <h2>9.14 多層疑難排解決策樹</h2>
+<div class="demo-block"><div class="demo-label">決策樹 A：ISP 架構選擇混淆</div><pre>1. 想要最大控制權？
+   ├─ 是 → NVIDIA ISP（Orin/Thor）→ 手動 tuning
+   └─ 否 ┐
+2. 想要最省事？
+   ├─ 是 → libcamera 自動（RPi5）→ 用預設 tuning
+   └─ 否 ┐
+3. 想要最低延遲？
+   ├─ 是 → 感測器 ISP（Orange Pi）→ 無額外處理
+   └─ 否 → 依需求選擇（效能/延遲/控制）</pre></div>
+
+<div class="demo-block"><div class="demo-label">決策樹 B：tuning 效果不明顯</div><pre>1. 調了參數但效果沒改變？
+   ├─ 是 ┐
+   │   2. 驅動已重載？
+   │      ├─ 否 → rmmod + modprobe
+   │      └─ 是 ┐
+   │      3. 參數名稱正確？
+   │         ├─ 否 → 查 API reference
+   │         └─ 是 → 值在合法範圍？
+   │                 ├─ 否 → 調回合法範圍
+   │                 └─ 是 → 軟體 bug → 回報原廠
+   └─ 否 → 效果預期之外（需理解底層邏輯）</pre></div>
+
+  <h2>9.15 量測驗證完整 SOP</h2>
+<ol>
+<li><strong>tuning 路徑確認</strong>：<code>ls /opt/nvidia/</code> → 找到 camera / tuning 資料夾。</li>
+<li><strong>備份</strong>：cp 原始 tuning 檔案 → .bak。</li>
+<li><strong>修改參數</strong>：以 brightness 為例，調整增益值（+50%）。</li>
+<li><strong>重載驅動</strong>：<code>sudo rmmod tegra_vi && sudo modprobe tegra_vi</code>。</li>
+<li><strong>對比測試</strong>：原始設定 vs 調整後，取 RAW → 計算 mean 差異。</li>
+<li><strong>效果確認</strong>：mean 變化 &gt; 10% = tuning 有效。</li>
+<li><strong>記錄</strong>：參數名、原值、新值、效果百分比 → 存入 tuning log。</li>
+</ol>
+<div class="callout"><strong>判讀標準：</strong>修改參數 → 重載驅動 → 出圖差異 &gt; 10% = ISP tuning 有效。差異 &lt; 5% 需查參數名/值範圍。</div>
+
+  <h2>9.16 四平台终极對照</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th><th>推薦</th></tr>
+<tr><td>ISP 調校方式</td><td>tegracam XML tuning</td><td>libcamera JSON tuning</td><td>無 / 基本 brightness</td><td>tegracam + Holoscan</td><td>各有格式</td></tr>
+<tr><td>調校精細度</td><td>極高（數百參數）</td><td>中（數十參數）</td><td>低（數個參數）</td><td>極高 + AI</td><td>量產 → Orin/Thor</td></tr>
+<tr><td>學習成本</td><td>高</td><td>中</td><td>低</td><td>極高</td><td>入門 → RPi5</td></tr>
+<tr><td>文件品質</td><td>良好</td><td>良好</td><td>有限</td><td>良好</td><td>NVIDIA 文件完整</td></tr>
+<tr><td>社群支援</td><td>VIDIA 開發者論壇</td><td>libcamera 社群</td><td>Orange Pi 社群</td><td>NVIDIA 開發者論壇</td><td>RPi5 社群活躍</td></tr>
+<tr><td>自動調校</td><td>✅ 可程式化</td><td>✅ tuning file</td><td>❌</td><td>✅ + Holoscan AI</td><td>AI → Thor</td></tr>
+<tr><td>平台無關知識</td><td colspan="4">ISP 原理（Bayer/demosaic/色彩空間）全平台共用</td><td>基礎最重要</td></tr>
+</table>
+
+  <h2>9.17 完整 Bring-up 專案 Checklist</h2>
+<ul>
+<li>- [ ] 確認平台 ISP 架構：NVIDIA ISP / libcamera / 感測器 ISP</li>
+<li>- [ ] 找到 tuning 檔案路徑</li>
+<li>- [ ] 備份原始 tuning 檔案</li>
+<li>- [ ] 嘗試調整一個參數（如 brightness）並重載</li>
+<li>- [ ] 對比原始 vs 調整後，計算效果差異</li>
+<li>- [ ] 理解各平台 ISP 的調校介面差異</li>
+<li>- [ ] 記錄平台 ISP 架構選擇建議</li>
+<li>- [ ] 產出 ISP 架構比較報告（控制力/延遲/學習成本）</li>
+<li>- [ ] 建立 tuning 備份/還原流程</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-08.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 8 · RAW 擷取與資料格式</div></a>
-    <a class="np-next" href="unit-10.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 10 · 曝光與自動曝光（AE）</div></a>
+    <a class="np-next" href="unit-10.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 10 · 曝光與自動曝光</div></a>
   </div>
+</div>
 </div>
 
 <footer>這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>

@@ -272,10 +272,119 @@ argus_camera --mode 0 --raw-file cc.raw --duration 1      <span class="hl-c"># �
 <li>- [ ] 能把調校參數與 log 版本化、可重現。</li>
 </ul>
 
+  <h2>14.15 Register 位元級完整工作流：HDR 3-Frame 合成驗證</h2>
+<table class="reg-table">
+<tr><th>步驟</th><th>Command</th><th>驗證目標</th><th>預期結果</th></tr>
+<tr><td>1. 短曝出圖</td><td>argus --exposure-value 0.002</td><td>高光保留</td><td>高光區域有細節</td></tr>
+<tr><td>2. 中曝出圖</td><td>argus --exposure-value 0.016</td><td>中間調</td><td>正常曝光</td></tr>
+<tr><td>3. 長曝出圖</td><td>argus --exposure-value 0.128</td><td>暗部提升</td><td>暗部有細節</td></tr>
+<tr><td>4. 合成</td><td>Python fusion</td><td>HDR 結果</td><td>全範圍有細節</td></tr>
+<tr><td>5. 動態範圍</td><td>log2(max/min)</td><td>DR 值</td><td>> 60 dB</td></tr>
+</table>
+<div class="demo-block"><div class="demo-label">HDR 合成完整驗證腳本</div><pre><span class="hl-c">#!/usr/bin/env python3</span>
+<span class="hl-c"># hdr_verify.py — HDR 3-frame 合成驗證</span>
+import numpy as np, matplotlib.pyplot as plt
+
+<span class="hl-c"># 載入三幀（假設已拍攝）</span>
+short = np.fromfile("hdr_short.raw", dtype=np.uint16).reshape(800, 1280).astype(float)
+medium = np.fromfile("hdr_medium.raw", dtype=np.uint16).reshape(800, 1280).astype(float)
+long = np.fromfile("hdr_long.raw", dtype=np.uint16).reshape(800, 1280).astype(float)
+
+<span class="hl-c"># 曝光比</span>
+ratio_ml = 0.128 / 0.016  <span class="hl-c"># medium → long = 8x</span>
+ratio_sm = 0.016 / 0.002  <span class="hl-c"># short → medium = 8x</span>
+
+<span class="hl-c"># 簡單合成：取每幀最不飽和的區域</span>
+max_val = 1023
+saturation = 0.9 * max_val
+
+<span class="hl-c"># 暗部用長曝、中間調用中曝、高光用短曝</span>
+hdr = np.zeros_like(medium)
+dark_mask = medium < saturation * 0.3
+bright_mask = short > saturation * 0.1
+mid_mask = ~dark_mask & ~bright_mask
+
+hdr[dark_mask] = long[dark_mask] / ratio_ml
+hdr[mid_mask] = medium[mid_mask]
+hdr[bright_mask] = short[bright_mask] * ratio_sm
+
+<span class="hl-c"># 量測動態範圍</span>
+dr_linear = np.log2(hdr.max() / hdr[hdr > 0].min())
+dr_db = 20 * np.log10(hdr.max() / hdr[hdr > 0].min())
+print(f"HDR max: {hdr.max():.1f}")
+print(f"HDR min: {hdr[hdr > 0].min():.1f}")
+print(f"Dynamic Range: {dr_linear:.1f} stops ({dr_db:.1f} dB)")
+
+<span class="hl-c"># 比較三幀 vs HDR</span>
+fig, axes = plt.subplots(1, 4, figsize=(16, 4))
+for ax, img, title in zip(axes, [short, medium, long, hdr],
+                          ['Short (2ms)', 'Medium (16ms)', 'Long (128ms)', 'HDR Composite']):
+    ax.imshow(img, cmap='gray', vmin=0, vmax=1023)
+    ax.set_title(title); ax.axis('off')
+plt.tight_layout(); plt.savefig('hdr_comparison.png')
+print("Saved: hdr_comparison.png")
+
+<span class="hl-c"># Verdict</span>
+print(f"\nVERDICT: {'PASS (DR > 60dB)' if dr_db > 60 else 'CHECK: DR < 60dB'}")</pre></div>
+
+  <h2>14.16 多層疑難排解決策樹</h2>
+<div class="demo-block"><div class="demo-label">決策樹 A：清晰度不足（MTF 低）</div><pre>1. MTF50 < 標準的 70%？
+   ├─ 是 ┐
+   │   2. 鏡頭解像力不足？
+   │      ├─ 換鏡頭測試 → 改善 = 鏡頭問題
+   │      └─ 不改善 = 感測器 / ISP 問題
+   │         → 提升 ISP 銳利化參數
+   │         → 或調校 demosaic 過濾器
+   └─ 否 → 清晰度合格</pre></div>
+
+<div class="demo-block"><div class="demo-label">決策樹 B：HDR 合成有重影</div><pre>1. HDR 合成後物體邊緣有殘影？
+   ├─ 是 → 幀間有運動 → 需要 motion-aligned HDR
+   │       或提高合成速度（用硬件加速）
+   └─ 否 → 靜態場景，簡單合成即可</pre></div>
+
+  <h2>14.17 量測驗證完整 SOP</h2>
+<ol>
+<li><strong>MTF 量測</strong>：ISO 12233 解析度板 → 計算 MTF50 → 與標稱比對。</li>
+<li><strong>清晰度參數</strong>：記錄 ISP 銳利化參數（strength/threshold/radius）。</li>
+<li><strong>HDR 三幀</strong>：短曝（0.002s）+ 中曝（0.016s）+ 長曝（0.128s）。</li>
+<li><strong>合成</strong>：Python 合成 → 計算動態範圍（log2 max/min）。</li>
+<li><strong>DR 判定</strong>：&gt; 60 dB = 優良；48-60 dB = 可接受；&lt; 48 dB = 不足。</li>
+<li><strong>調校工作流</strong>：曝光 → AWB → LSC → 降噪 → 銳利化 → HDR（依序調整）。</li>
+<li><strong>前後比較</strong>：每步驟後拍照 → 細節 + 色彩 + 雜訊全面比較。</li>
+</ol>
+<div class="callout"><strong>判讀標準：</strong>MTF50 &gt; 標稱 70% ✓、DR &gt; 60 dB ✓、調校工作流各步驟效果可見 ✓。</div>
+
+  <h2>14.18 四平台终极對照</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th><th>推薦</th></tr>
+<tr><td>MTF 量測</td><td colspan="4">ISO 12233 全平台共用</td><td>平台無關</td></tr>
+<tr><td>HDR 方式</td><td>多幀合成 / DOL-HDR</td><td>HDR 模式</td><td>有限</td><td>多幀 + AI 融合</td><td>各有方案</td></tr>
+<tr><td>動態範圍</td><td>~60 dB</td><td>~50 dB</td><td>~40 dB</td><td>>70 dB</td><td>高 DR → Thor</td></tr>
+<tr><td>調校工作流</td><td>tegracam pipeline</td><td>libcamera tuning</td><td>基本參數</td><td>tegracam + Holoscan</td><td>各有慣例</td></tr>
+<tr><td>清晰度控制</td><td>ISP 銳利化 + NR</td><td>libcamera sharp</td><td>有限</td><td>ISP + AI 超解析度</td><td>高清晰 → Thor</td></tr>
+<tr><td>HDR 重影處理</td><td>motion detection</td><td>有限</td><td>❌</td><td>AI motion align</td><td>動態 → Thor</td></tr>
+<tr><td>調校參數量</td><td>數百</td><td>數十</td><td>數個</td><td>數百 + AI</td><td>各有複雜度</td></tr>
+</table>
+
+  <h2>14.19 完整 Bring-up 專案 Checklist</h2>
+<ul>
+<li>- [ ] ISO 12233 解析度板 MTF50 量測</li>
+<li>- [ ] 記錄 ISP 銳利化參數（strength/threshold）</li>
+<li>- [ ] HDR 三幀拍攝（短曝/中曝/長曝）</li>
+<li>- [ ] 合成 HDR 並量測動態範圍</li>
+<li>- [ ] DR &gt; 60 dB 判定</li>
+<li>- [ ] 按工作流順序調校：曝光→AWB→LSC→NR→銳利化→HDR</li>
+<li>- [ ] 每步驟拍照比較</li>
+<li>- [ ] 記錄最佳調參組合</li>
+<li>- [ ] 建立可重複的調校 SOP</li>
+<li>- [ ] 產出調校報告（MTF/DR/最佳參數/前後比較圖）</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-13.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 13 · 雜訊與降噪</div></a>
-    <a class="np-next" href="unit-15.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 15 · 四平台影像調校功能比較</div></a>
+    <a class="np-next" href="unit-15.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 15 · 多平台影像調校功能比較</div></a>
   </div>
+</div>
 </div>
 
 <footer>這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>

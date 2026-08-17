@@ -266,6 +266,102 @@ argus_camera --mode 0 --capture-auto 1 --duration 1   <span class="hl-c"># 出�
 <li>- [ ] 能寫出「dmesg 沒 error 不代表生效」的驗證三件套。</li>
 </ul>
 
+  <h2>4.20 Register 位元級完整工作流：DTB Camera 節點 Mode 驗證</h2>
+<table class="reg-table">
+<tr><th>步驟</th><th>操作</th><th>驗證目標</th><th>預期輸出</th></tr>
+<tr><td>1. dmesg probe</td><td>dmesg | grep ov9281</td><td>驅動 probe 成功</td><td>probe success + chip ID</td></tr>
+<tr><td>2. media 拓撲</td><td>media-ctl -p</td><td>entity 鏈路完整</td><td>ov9281→csi→vi 完整路徑</td></tr>
+<tr><td>3. subdev controls</td><td>v4l2-ctl -d subdev0 --list-ctrls</td><td>exposure/gain 範圍</td><td>min/max 與 DTB mode 一致</td></tr>
+<tr><td>4. format 確認</td><td>v4l2-ctl -d video0 --list-formats-ext</td><td>支援的 fourcc</td><td>SRGGB10 + 尺寸 + 幀率</td></tr>
+<tr><td>5. Argus 列舉</td><td>argus_camera --list-cameras</td><td>相機可見</td><td>camera ID 出現</td></tr>
+<tr><td>6. 取幀驗證</td><td>v4l2-ctl --stream-mmap=1 --stream-count=1</td><td>幀大小正確</td><td>W × H × 2 bytes</td></tr>
+</table>
+<div class="demo-block"><div class="demo-label">DTB overlay 套用 → 完整驗證腳本</div><pre><span class="hl-c">#!/bin/bash</span>
+echo "=== Phase 1: Overlay 套用確認 ==="
+dmesg | grep -i "camera|ov9281" | tail -5
+echo ""
+echo "=== Phase 2: Media 拓撲 ==="
+media-ctl -p -d /dev/media0 2>/dev/null || echo "WARN: no media0"
+echo ""
+echo "=== Phase 3: Controls ==="
+v4l2-ctl -d /dev/v4l-subdev0 --list-ctrls 2>/dev/null | head -20
+echo ""
+echo "=== Phase 4: Formats ==="
+v4l2-ctl -d /dev/video0 --list-formats-ext 2>/dev/null
+echo ""
+echo "=== Phase 5: Argus ==="
+argus_camera --list-cameras 2>/dev/null || echo "WARN: argus failed"
+echo ""
+echo "=== Phase 6: Capture ==="
+v4l2-ctl -d /dev/video0 --stream-mmap=1 --stream-count=1 --stream-to=dtb_test.raw 2>/dev/null
+ls -l dtb_test.raw 2>/dev/null</pre></div>
+
+  <h2>4.21 多層疑難排解決策樹</h2>
+<div class="demo-block"><div class="demo-label">決策樹 A：DTB overlay 套用後 dmesg 出 error</div><pre>1. "of_device_alloc failed"？
+   ├─ 是 → overlay 屬性超出 kernel 限制
+   │       簡化 overlay：逐一註釋定位問題屬性
+   └─ 否 ┐
+2. "Unable to match"？
+   ├─ 是 → compatible string 與驅動不匹配
+   │       確認驅動模組已載入（lsmod | grep ov）
+   └─ 否 ┐
+3. "probe failed: -12"（ENOMEM）？
+   ├─ 是 → kernel 記憶體不足
+   │       減少不必要的 overlay / module
+   └─ 否 ┐
+4. probe 成功但無 /dev/videoN？
+   ├─ 是 → media entity 註冊失敗
+   │       media-ctl -p 檢查 pipeline
+   └─ 否 → ✅ probe 正常</pre></div>
+
+<div class="demo-block"><div class="demo-label">決策樹 B：多個 overlay 衝突</div><pre>1. 兩個 overlay 同時套用後異常？
+   ├─ 是 ┐
+   │   2. 是否修改了同一節點的同一屬性？
+   │      ├─ 是 → 合併為單一 overlay
+   │      └─ 否 → 調整 fragment target 避開衝突
+   └─ 否 → 逐一移除 overlay 定位問題源</pre></div>
+
+  <h2>4.22 量測驗證完整 SOP</h2>
+<ol>
+<li><strong>Overlay 套用</strong>：<code>dmesg | grep -i "camera|tegra-camera"</code> → 無 error。</li>
+<li><strong>Probe 確認</strong>：<code>dmesg | grep -i &lt;sensor&gt;</code> → probe success + 讀到 ID。</li>
+<li><strong>拓撲確認</strong>：<code>media-ctl -p</code> → 感測器→CSI→VI 完整路徑。</li>
+<li><strong>Controls 確認</strong>：<code>v4l2-ctl -d /dev/v4l-subdev0 --list-ctrls</code> → exposure/gain 範圍符合 mode。</li>
+<li><strong>Formats 確認</strong>：<code>v4l2-ctl -d /dev/video0 --list-formats-ext</code> → fourcc、尺寸、幀率。</li>
+<li><strong>Argus 列舉</strong>：<code>argus_camera --list-cameras</code> → 相機出現。</li>
+<li><strong>出圖確認</strong>：<code>argus_camera --mode 0 --capture-auto 1 --duration 1</code> + 取 RAW 驗證尺寸。</li>
+<li><strong>改動回歸</strong>：每次改 DTB 後重跑 Step 1-7；「dmesg 沒 error」≠ 生效——以「列得出 + 取得到 + 尺寸對」三項為準。</li>
+</ol>
+<div class="callout"><strong>判讀標準：</strong>Step 1-6 全 pass + Step 7 幀大小正確 + Step 8 每次改動後回歸通過。</div>
+
+  <h2>4.23 四平台终极對照</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th><th>推薦</th></tr>
+<tr><td>感測器框架</td><td>tegracam</td><td>libcamera IPA</td><td>V4L2 subdev</td><td>tegracam + Holoscan</td><td>各有慣例</td></tr>
+<tr><td>設定介面</td><td>DTB mode + overlay</td><td>dtoverlay + 核心 patch</td><td>overlay / 核心</td><td>DTB + Holoscan</td><td>DTB 為主</td></tr>
+<tr><td>controls 來源</td><td>tegracam 統一</td><td>libcamera 控制</td><td>V4L2 原生</td><td>tegracam</td><td>框架統整</td></tr>
+<tr><td>自寫驅動難度</td><td>中</td><td>中</td><td>低</td><td>高</td><td>DIY → Orange Pi</td></tr>
+<tr><td>調校介面</td><td>NVIDIA tuning</td><td>tuning file (JSON)</td><td>無 / 陽春</td><td>NVIDIA tuning</td><td>量產 → Orin</td></tr>
+<tr><td>Overlay 熱插拔</td><td>需 reboot</td><td>支援 dtoverlay 動態</td><td>需 reboot</td><td>需 reboot</td><td>RPi5 最靈活</td></tr>
+<tr><td>Probe 驗證</td><td colspan="4">dmesg + media-ctl + v4l2-ctl 全平台相同</td><td>統一流程</td></tr>
+</table>
+
+  <h2>4.24 完整 Bring-up 專案 Checklist</h2>
+<ul>
+<li>- [ ] 確認 tegracam 驅動模組已編譯進 kernel</li>
+<li>- [ ] 編寫或取得 DTB overlay（.dts → dtc → .dtbo）</li>
+<li>- [ ] overlay 複製到 /boot/dtb/overlays/ 並 reboot</li>
+<li>- [ ] dmesg 確認 camera 節點 probe 成功（含 ID 讀取）</li>
+<li>- [ ] media-ctl -p 確認拓撲完整（感測器→CSI→VI）</li>
+<li>- [ ] v4l2-ctl --list-ctrls 確認 exposure/gain 範圍</li>
+<li>- [ ] v4l2-ctl --list-formats-ext 確認 fourcc/尺寸/幀率</li>
+<li>- [ ] argus_camera --list-cameras 確認相機可見</li>
+<li>- [ ] argus_camera 出圖成功，RAW 大小正確</li>
+<li>- [ ] 改 DTB 後重跑上述所有驗證（回歸測試）</li>
+<li>- [ ] 「dmesg 沒 error」不等於生效——以出圖為準</li>
+<li>- [ ] 記錄所有驗證結果至 DTB 版本管理文件</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-03.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 3 · 感測器通訊介面</div></a>
     <a class="np-next" href="unit-05.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 5 · 第一個鏡頭跑起來</div></a>

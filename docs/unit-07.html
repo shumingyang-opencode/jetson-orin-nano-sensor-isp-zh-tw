@@ -219,6 +219,112 @@ EOF
 <li>- [ ] 能比較四平台 ISP 的可視性與自動化差異。</li>
 </ul>
 
+  <h2>7.26 Register 位元級完整工作流：ISP Pipeline 驗證——sensor ISP vs NVIDIA ISP</h2>
+<table class="reg-table">
+<tr><th>步驟</th><th>Command</th><th>sensor ISP 路徑</th><th>NVIDIA ISP 路徑</th></tr>
+<tr><td>1. 確認模式</td><td>argus_camera --mode &lt;N&gt;</td><td>mode 1（YUV 輸出）</td><td>mode 0（RAW 輸出）</td></tr>
+<tr><td>2. 輸出格式</td><td>v4l2-ctl --list-formats-ext</td><td>NV16 / YUV422</td><td>SRGGB10 RAW</td></tr>
+<tr><td>3. 直方圖</td><td>argus_camera --stats</td><td>感測器 ISP 內部直方圖</td><td>NVIDIA ISP 直方圖</td></tr>
+<tr><td>4. 3A 輸出</td><td>argus_camera --3a-output</td><td>感測器 ISP 自動調整</td><td>NVIDIA ISP 自動調整</td></tr>
+<tr><td>5. 延遲比較</td><td>time argus …</td><td>較低（無 ISP 延遲）</td><td>較高（ISP 管線延遲）</td></tr>
+</table>
+<div class="demo-block"><div class="demo-label">Sensor ISP vs NVIDIA ISP 出圖比較腳本</div><pre><span class="hl-c">#!/bin/bash</span>
+<span class="hl-c"># isp_compare.sh — 比較兩種 ISP 路徑</span>
+
+echo "=== Sensor ISP（mode 1, YUV）==="
+time argus_camera --camera-id 0 --mode 1 \
+  --exposure-value 0.016 --gain-value 4.0 \
+  --capture-auto 1 --duration 1 --file-type raw \
+  --output-dir /tmp/sensor_isp
+ls -l /tmp/sensor_isp/*.raw
+
+echo ""
+echo "=== NVIDIA ISP（mode 0, RAW + ISP pipeline）==="
+time argus_camera --camera-id 0 --mode 0 \
+  --exposure-value 0.016 --gain-value 4.0 \
+  --capture-auto 1 --duration 1 --file-type raw \
+  --output-dir /tmp/nvidia_isp
+ls -l /tmp/nvidia_isp/*.raw
+
+echo ""
+echo "=== 檔案大小比較 ==="
+S=$(stat -f%z /tmp/sensor_isp/*.raw)
+N=$(stat -f%z /tmp/nvidia_isp/*.raw)
+echo "Sensor ISP: $S bytes"
+echo "NVIDIA ISP: $N bytes"
+echo "（Sensor ISP 輸出 YUV 較小；NVIDIA ISP 輸出 RAW 較大）"
+
+echo ""
+echo "=== 亮度比較 ==="
+python3 -c "
+import numpy as np
+s = np.fromfile('/tmp/sensor_isp/*.raw', dtype=np.uint8).mean()
+n = np.fromfile('/tmp/nvidia_isp/*.raw', dtype=np.uint16).mean()
+print(f'Sensor ISP mean={s:.1f} (8-bit YUV)')
+print(f'NVIDIA ISP mean={n:.1f} (16-bit RAW)')
+"</pre></div>
+
+  <h2>7.27 多層疑難排解決策樹</h2>
+<div class="demo-block"><div class="demo-label">決策樹 A：Argus 開 session 失敗</div><pre>1. "Session create failed"？
+   ├─ 有其他 argus 在跑？
+   │   ├─ 是 → kill 舊程序
+   │   └─ 否 → ISP bandwidth 超限
+   │          → 降 mode 或減少同時開路數
+   ├─ 輸出路徑不存在？
+   │   └─ mkdir -p 輸出路徑
+   └─ ISP patch 版本？
+       └─ 更新 libnvscf.so（重新安裝 jetson-multipackage）</pre></div>
+
+<div class="demo-block"><div class="demo-label">決策樹 B：ISP 路徑選擇混淆</div><pre>1. 想要 RAW 數據？
+   ├─ 是 → 用 mode 0（sensor RAW 輸出）
+   │       → NVIDIA ISP 在 argus pipeline 內做
+   │       → 需要 libnvivp tuning
+   └─ 否 ┐
+2. 想要已處理的 YUV？
+   ├─ 是 → 用 mode 1（sensor ISP YUV 輸出）
+   │       → NVIDIA ISP 不再處理
+   └─ 否 ┐
+3. 想要最大控制權？
+   ├─ 是 → mode 0 + custom tuning file
+   └─ 否 → mode 1（sensor ISP 內建處理最省事）</pre></div>
+
+  <h2>7.28 量測驗證完整 SOP</h2>
+<ol>
+<li><strong>Mode 確認</strong>：<code>v4l2-ctl -d /dev/video0 --list-formats-ext</code> → 記錄 SRGGB10（mode 0）與 YUV（mode 1）。</li>
+<li><strong>sensor ISP 出圖</strong>：<code>argus_camera --mode 1 --capture-auto 1 --duration 1 -o /tmp/sensor_isp</code>。</li>
+<li><strong>NVIDIA ISP 出圖</strong>：<code>argus_camera --mode 0 --capture-auto 1 --duration 1 -o /tmp/nvidia_isp</code>。</li>
+<li><strong>大小比較</strong>：sensor ISP（YUV）&lt; NVIDIA ISP（RAW）。</li>
+<li><strong>亮度比較</strong>：sensor ISP mean ≈ 120（8-bit），NVIDIA ISP mean ≈ 400-600（16-bit）。</li>
+<li><strong>延遲量測</strong>：每種各取 100 幀，記錄平均擷取時間。</li>
+<li><strong>選擇原則</strong>：需要原始 RAW → mode 0；需要省事 YUV → mode 1；需要最大控制 → mode 0 + tuning。</li>
+</ol>
+<div class="callout"><strong>判讀標準：</strong>兩種路徑均能出圖 + 大小/亮度合理 + 延遲量測完成 = ISP 管線概念清晰。</div>
+
+  <h2>7.29 四平台终极對照</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th><th>推薦</th></tr>
+<tr><td>ISP 管線</td><td>NVIDIA ISP（複雜）</td><td>libcamera 簡化管線</td><td>感測器內建</td><td>NVIDIA + Holoscan</td><td>學習 → Orin</td></tr>
+<tr><td>可用調校模組</td><td>tegracam 精細控制</td><td>tuning file (JSON)</td><td>基本 brightness</td><td>更強 ISP + AI</td><td>量產 → Orin/Thor</td></tr>
+<tr><td>GPU 加速後處理</td><td>✅（TensorRT）</td><td>有限</td><td>有限</td><td>✅（更強 GPU）</td><td>AI 推論 → Orin</td></tr>
+<tr><td>感測器 ISP 輸出</td><td>✅ mode 1</td><td>✅ libcamera</td><td>✅ 無 ISP</td><td>✅ mode 1</td><td>省事 → mode 1</td></tr>
+<tr><td>NVIDIA ISP 輸出</td><td>✅ mode 0</td><td>❌</td><td>❌</td><td>✅ mode 0</td><td>控制 → mode 0</td></tr>
+<tr><td>tegracam tuning</td><td>✅ 精細</td><td>JSON tuning file</td><td>無</td><td>✅ + Holoscan</td><td>各有格式</td></tr>
+<tr><td>ISP 延遲</td><td>中</td><td>低</td><td>最低</td><td>中</td><td>低延遲 → RPi5</td></tr>
+</table>
+
+  <h2>7.30 完整 Bring-up 專案 Checklist</h2>
+<ul>
+<li>- [ ] 確認 mode 0（RAW）和 mode 1（YUV）均可選</li>
+<li>- [ ] sensor ISP 出圖（mode 1），記錄大小和亮度</li>
+<li>- [ ] NVIDIA ISP 出圖（mode 0），記錄大小和亮度</li>
+<li>- [ ] 比較兩種路徑的延遲（擷取時間）</li>
+<li>- [ ] 理解 sensor ISP 輸出 vs NVIDIA ISP 輸出的差異</li>
+<li>- [ ] 確認 Argus session 正常建立（無報錯）</li>
+<li>- [ ] 記錄 Argus 版本與 libnvscf 版本</li>
+<li>- [ ] 建立兩種路徑的出圖腳本供後續使用</li>
+<li>- [ ] 產出 ISP 管線選擇建議（何時用 mode 0 / mode 1）</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-06.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 6 · Sensor Bring-up 與除錯</div></a>
     <a class="np-next" href="unit-08.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 8 · RAW 擷取與資料格式</div></a>

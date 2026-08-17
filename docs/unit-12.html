@@ -254,10 +254,121 @@ mv lsc_table.npy lsc_$(date +%Y%m%d_%H%M%S).npy</pre></div>
 <li>- [ ] 能操作 lsc_auto.sh 並解讀增益表範圍。</li>
 </ul>
 
+  <h2>12.11 Register 位元級完整工作流：LSC 校正——白牆拍攝 + 增益表</h2>
+<table class="reg-table">
+<tr><th>步驟</th><th>Command / 量測</th><th>預期</th></tr>
+<tr><td>1. 白牆/白紙出圖</td><td>argus + 均勻白光源</td><td>中心與角落亮度一致</td></tr>
+<tr><td>2. 暗角量測</td><td>中心 mean / 角落 mean</td><td>比值 &lt; 1.2</td></tr>
+<tr><td>3. 色偏量測</td><td>角落 R/G/B ratio vs 中心</td><td>偏離 &lt; 5%</td></tr>
+<tr><td>4. 增益表視覺化</td><td>plt.imshow(gain_map)</td><td>中心 1.0，邊緣 &gt; 1.0</td></tr>
+</table>
+<div class="demo-block"><div class="demo-label">LSC 完整驗證腳本</div><pre><span class="hl-c">#!/usr/bin/env python3</span>
+<span class="hl-c"># lsc_verify.py — 驗證鏡頭陰影校正</span>
+import numpy as np, matplotlib.pyplot as plt
+
+<span class="hl-c"># 假設已有白牆 RAW（mode 0, SRGGB10）</span>
+raw = np.fromfile("white_wall.raw", dtype=np.uint16).reshape(800, 1280)
+
+<span class="hl-c"># 四通道分離</span>
+R = raw[0::2, 0::2].astype(float)
+Gr = raw[0::2, 1::2].astype(float)
+Gb = raw[1::2, 0::2].astype(float)
+B = raw[1::2, 1::2].astype(float)
+
+<span class="hl-c"># 亮度圖（四通道平均）</span>
+luma = (R + Gr + Gb + B) / 4
+
+<span class="hl-c"># 暗角量測</span>
+center = luma[350:450, 550:700].mean()
+corner_tl = luma[0:100, 0:100].mean()
+corner_tr = luma[0:100, -100:].mean()
+corner_bl = luma[-100:, 0:100].mean()
+corner_br = luma[-100:, -100:].mean()
+corners = np.mean([corner_tl, corner_tr, corner_bl, corner_br])
+
+vignetting = corners / center
+print(f"Center: {center:.1f}")
+print(f"Avg corner: {corners:.1f}")
+print(f"Vignetting ratio: {vignetting:.3f} ({(1-vignetting)*100:.1f}% loss)")
+print(f"VERDICT: {'PASS' if vignetting > 0.85 else 'NEEDS LSC'}")
+
+<span class="hl-c"># 色偏</span>
+rg_center = R[350:450, 550:700].mean() / Gr[350:450, 550:700].mean()
+bg_center = B[350:450, 550:700].mean() / Gb[350:450, 550:700].mean()
+rg_corner = R[0:100, 0:100].mean() / Gr[0:100, 0:100].mean()
+bg_corner = B[0:100, 0:100].mean() / Gb[0:100, 0:100].mean()
+print(f"Center R/G: {rg_center:.3f}, Corner R/G: {rg_corner:.3f}")
+print(f"Center B/G: {bg_center:.3f}, Corner B/G: {bg_corner:.3f}")
+color_shift = abs(rg_center - rg_corner) + abs(bg_center - bg_corner)
+print(f"Color shift: {color_shift:.3f} ({'PASS' if color_shift < 0.05 else 'NEEDS CORRECTION'})")
+
+<span class="hl-c"># Gain map</span>
+gain_map = center / np.where(luma > 10, luma, 1)
+plt.figure(figsize=(10, 4))
+plt.subplot(121); plt.imshow(luma, cmap='gray'); plt.title('Luma (uncorrected)')
+plt.subplot(122); plt.imshow(gain_map, cmap='hot', vmin=1, vmax=2); plt.title('LSC Gain Map')
+plt.colorbar(); plt.tight_layout(); plt.savefig('lsc_analysis.png')
+print("Saved: lsc_analysis.png")</pre></div>
+
+  <h2>12.12 多層疑難排解決策樹</h2>
+<div class="demo-block"><div class="demo-label">決策樹 A：白牆中心與角落亮度差異大</div><pre>1. 暗角比值 < 0.85（> 15% loss）？
+   ├─ 是 ┐
+   │   2. 用 f/4.0 重拍？暗角改善？
+   │      ├─ 是 → 純光學暗角（正常）
+   │      │       → 用 LSC 補償
+   │      └─ 否 → 感測器微透鏡問題
+   │              → 需要光機調整（鏡頭位置）
+   └─ 否 ┐
+2. 中心與角落色偏 > 5%？
+   ├─ 是 → LSC 未啟用或增益表有誤
+   └─ 否 → 無暗角問題</pre></div>
+
+<div class="demo-block"><div class="demo-label">決策樹 B：LSC 增益表方向錯誤</div><pre>1. LSC 後角落更暗？
+   ├─ 增益表方向反轉 → 中心值 / 角落值 改為 角落值 / 中心值
+   └─ 正常 → ✅</pre></div>
+
+  <h2>12.13 量測驗證完整 SOP</h2>
+<ol>
+<li><strong>白牆拍攝</strong>：均勻打光白牆/白紙，取 RAW。</li>
+<li><strong>暗角量測</strong>：中心 100×100 vs 四角 100×100 → 比值。</li>
+<li><strong>判定</strong>：比值 &gt; 0.85 → 無需 LSC；&lt; 0.85 → 需要 LSC。</li>
+<li><strong>增益表計算</strong>：gain(x,y) = center_mean / pixel(x,y)。</li>
+<li><strong>視覺化</strong>：畫 gain map → 確認中心 ~1.0、邊緣 &gt; 1.0。</li>
+<li><strong>LSC 應用</strong>：原始 RAW × gain map = LSC corrected RAW。</li>
+<li><strong>驗證</strong>：LSC 後暗角比值 &gt; 0.95 = 成功。</li>
+</ol>
+<div class="callout"><strong>判讀標準：</strong>LSC 前暗角 &gt; 15% → LSC 後暗角 &lt; 5% = LSC 校正成功。</div>
+
+  <h2>12.14 四平台终极對照</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th><th>推薦</th></tr>
+<tr><td>LSC 實作</td><td>tegracam tuning</td><td>libcamera tuning</td><td>無</td><td>tegracam + Holoscan</td><td>各有格式</td></tr>
+<tr><td>增益表來源</td><td>校正工具生成</td><td>自動偵測</td><td>無</td><td>自動 + AI</td><td>校正 → 最準</td></tr>
+<tr><td>即時 LSC</td><td>✅ 硬體加速</td><td>✅</td><td>❌</td><td>✅</td><td>全平台可選</td></tr>
+<tr><td>校正需求</td><td>每顆鏡頭獨立</td><td>每顆鏡頭獨立</td><td>不支援</td><td>每顆鏡頭獨立</td><td>鏡頭 ↔ 感測器配對</td></tr>
+<tr><td>暗角容忍度</td><td>&lt; 5%（量產）</td><td>&lt; 10%（原型）</td><td>N/A</td><td>&lt; 3%（高階）</td><td>依應用</td></tr>
+<tr><td>LSC 增益表格式</td><td>16-bit grid</td><td>JSON 陣列</td><td>無</td><td>16-bit grid</td><td>平台專屬</td></tr>
+<tr><td>全平台共通知識</td><td colspan="4">暗角原理 + 增益表計算 + 中心/角落比值</td><td>原理最重要</td></tr>
+</table>
+
+  <h2>12.15 完整 Bring-up 專案 Checklist</h2>
+<ul>
+<li>- [ ] 白牆/白紙 + 均勻光源，取 RAW</li>
+<li>- [ ] 量測中心與四角亮度，計算暗角比值</li>
+<li>- [ ] 判定是否需要 LSC（比值 &lt; 0.85）</li>
+<li>- [ ] 計算增益表，視覺化確認方向正確</li>
+<li>- [ ] 套用 LSC，驗證暗角改善（&lt; 5%）</li>
+<li>- [ ] 色偏量測（中心 vs 角落 R/G、B/G）</li>
+<li>- [ ] 不同光圈下暗角比較（f/2.8 vs f/4.0）</li>
+<li>- [ ] 記錄鏡頭型號與暗角特性</li>
+<li>- [ ] 產出 LSC 校正報告（增益表/暗角改善/色偏修正）</li>
+</ul>
+
   <div class="next-prev">
-    <a href="unit-11.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 11 · 白平衡與色彩（AWB/CCM）</div></a>
+    <a href="unit-11.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 11 · 白平衡與色彩</div></a>
     <a class="np-next" href="unit-13.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 13 · 雜訊與降噪</div></a>
   </div>
+</div>
 </div>
 
 <footer>這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>

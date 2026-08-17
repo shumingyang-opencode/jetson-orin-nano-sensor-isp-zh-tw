@@ -265,10 +265,131 @@ done
 <li>- [ ] 能寫下你平台的增益上限與 NR 設定。</li>
 </ul>
 
+  <h2>13.12 Register 位元級完整工作流：雜訊量測——不同增益下的 σ</h2>
+<table class="reg-table">
+<tr><th>步驟</th><th>Command</th><th>量測目標</th><th>預期</th></tr>
+<tr><td>1. 增益 1x 出圖</td><td>argus --gain-value 1.0</td><td>基線 σ</td><td>σ ≈ 2-5</td></tr>
+<tr><td>2. 增益 2x 出圖</td><td>argus --gain-value 2.0</td><td>σ 增加</td><td>σ ≈ 4-10</td></tr>
+<tr><td>3. 增益 4x 出圖</td><td>argus --gain-value 4.0</td><td>σ 增加</td><td>σ ≈ 8-20</td></tr>
+<tr><td>4. 增益 8x 出圖</td><td>argus --gain-value 8.0</td><td>σ 顯著增加</td><td>σ ≈ 16-40</td></tr>
+<tr><td>5. σ vs gain 曲線</td><td>matplotlib plot</td><td>線性關係</td><td>σ ∝ gain（理想）</td></tr>
+</table>
+<div class="demo-block"><div class="demo-label">雜訊量測完整腳本：σ vs Gain 曲線</div><pre><span class="hl-c">#!/usr/bin/env python3</span>
+<span class="hl-c"># noise_vs_gain.py — 雜訊 vs 增益完整量測</span>
+import numpy as np, matplotlib.pyplot as plt, subprocess, glob
+
+gains = [1.0, 2.0, 4.0, 8.0, 16.0]
+results = []
+
+for gain in gains:
+    subprocess.run([
+        "argus_camera", "--camera-id", "0", "--mode", "0",
+        "--exposure-value", "0.016", "--gain-value", str(gain),
+        "--capture-auto", "0", "--duration", "1",
+        "--output-dir", f"/tmp/noise_g{int(gain)}"
+    ], capture_output=True)
+    
+    raw = glob.glob(f"/tmp/noise_g{int(gain)}/*.raw")
+    if raw:
+        data = np.fromfile(raw[0], dtype=np.uint16).reshape(800, 1280)
+        flat_region = data[350:450, 550:700]
+        sigma = flat_region.std()
+        mean = flat_region.mean()
+        snr = mean / sigma if sigma > 0 else 0
+        results.append({"gain": gain, "mean": mean, "sigma": sigma, "snr": snr})
+        print(f"Gain {gain:.0f}x: mean={mean:.1f} sigma={sigma:.2f} SNR={snr:.1f}")
+
+<span class="hl-c"># Plot</span>
+gains_r = [r["gain"] for r in results]
+sigmas = [r["sigma"] for r in results]
+snrs = [r["snr"] for r in results]
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
+ax1.plot(gains_r, sigmas, 'bo-', label='Measured')
+ax1.plot(gains_r, [sigmas[0]*g for g in gains_r], 'r--', label='Ideal (σ ∝ gain)')
+ax1.set_xlabel('Gain'); ax1.set_ylabel('σ (DN)'); ax1.set_title('Noise vs Gain')
+ax1.legend(); ax1.grid(True, alpha=0.3)
+
+ax2.plot(gains_r, snrs, 'go-')
+ax2.set_xlabel('Gain'); ax2.set_ylabel('SNR'); ax2.set_title('SNR vs Gain')
+ax2.grid(True, alpha=0.3)
+
+plt.tight_layout(); plt.savefig('noise_analysis.png')
+print("Saved: noise_analysis.png")
+
+<span class="hl-c"># Verdict</span>
+ideal_sigma = sigmas[0] * gains_r[-1]
+actual_sigma = sigmas[-1]
+deviation = abs(actual_sigma - ideal_sigma) / ideal_sigma * 100
+print(f"\nIdeal σ at {gains_r[-1]}x: {ideal_sigma:.1f}")
+print(f"Actual σ at {gains_r[-1]}x: {actual_sigma:.1f}")
+print(f"Deviation: {deviation:.1f}%")
+print(f"VERDICT: {'PASS' if deviation < 30 else 'CHECK SENSOR'}")</pre></div>
+
+  <h2>13.13 多層疑難排解決策樹</h2>
+<div class="demo-block"><div class="demo-label">決策樹 A：σ vs gain 不是線性</div><pre>1. σ 隨 gain 增加但不成正比？
+   ├─ 是 → 感測器固定雜訊佔比高
+   │       → 降曝光時間（短曝 + 高 gain 更糟）
+   └─ 否 ┐
+2. σ 在高 gain 暴增（非線性跳躍）？
+   ├─ 是 → 感測器接近最大增益限制
+   │       → 限制增益上限（如 8x → 16x 不建議）
+   └─ 否 ┐
+3. σ 隨 gain 不變？
+   ├─ 是 → ISP 降噪已介入（或 gain 未生效）
+   └─ 否 → 正常線性關係</pre></div>
+
+<div class="demo-block"><div class="demo-label">決策樹 B：降噪後太模糊</div><pre>1. 降噪後細節嚴重流失？
+   ├─ 2D 降噪強度過高 → 降 spatial strength
+   │  或改用 temporal（時域）降噪
+   ├─ 是 ┐
+   │   2. Temporal 降噪可用？
+   │      ├─ 是 → 用 temporal（保細節更好）
+   │      └─ 否 → 降 spatial strength + 開 edge preservation
+   └─ 否 → 正常 tradeoff</pre></div>
+
+  <h2>13.14 量測驗證完整 SOP</h2>
+<ol>
+<li><strong>基線量測</strong>：增益 1x、固定曝光，取 RAW → 平坦區 σ ≈ 基線。</li>
+<li><strong>增益階梯</strong>：1x/2x/4x/8x/16x 各取 RAW → 計算 σ。</li>
+<li><strong>σ vs gain 曲線</strong>：畫圖 → 確認線性關係（σ ∝ gain）。</li>
+<li><strong>SNR 計算</strong>：SNR = mean / σ → 各增益下的 SNR。</li>
+<li><strong>暗場量測</strong>：全遮鏡頭 → σ = 純感測器雜訊（應最低）。</li>
+<li><strong>降噪比較</strong>：開啟 ISP 降噪 → 重複步驟 1-4 → 比較改善。</li>
+<li><strong>細節保留</strong>：解析度板（ISO 12233）→ 降噪前後 MTF 比較。</li>
+</ol>
+<div class="callout"><strong>判讀標準：</strong>σ ∝ gain（線性）✓、SNR 隨 gain 降低（正常）✓、降噪改善 σ 且細節保留 &gt; 80% ✓。</div>
+
+  <h2>13.15 四平台终极對照</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th><th>推薦</th></tr>
+<tr><td>降噪方式</td><td>ISP 2D/3D 降噪</td><td>libcamera 簡化降噪</td><td>感測器內建</td><td>ISP + AI 降噪</td><td>各有方案</td></tr>
+<tr><td>AI 降噪</td><td>✅ TensorRT</td><td>有限</td><td>❌</td><td>✅ 更強</td><td>高品質 → Orin/Thor</td></tr>
+<tr><td>降噪 vs 細節</td><td>可調平衡</td><td>固定預設</td><td>無控制</td><td>AI 最佳平衡</td><td>量產 → Orin</td></tr>
+<tr><td>3D Temporal</td><td>✅（需穩定場景）</td><td>有限</td><td>❌</td><td>✅</td><td>監控 → 3D</td></tr>
+<tr><td>Edge Preservation</td><td>✅ 可調</td><td>自動</td><td>❌</td><td>✅ + AI</td><td>邊緣重要 → Orin</td></tr>
+<tr><td>雜訊模型</td><td>shot + read + FPN</td><td>shot + read</td><td>依感測器</td><td>完整模型</td><td>全平台共通</td></tr>
+<tr><td>降噪學習成本</td><td>中高</td><td>低</td><td>不需</td><td>高</td><td>入門 → RPi5</td></tr>
+</table>
+
+  <h2>13.16 完整 Bring-up 專案 Checklist</h2>
+<ul>
+<li>- [ ] 暗場量測 σ（全遮鏡頭，增益 1x）</li>
+<li>- [ ] 各增益（1/2/4/8/16x）σ 量測</li>
+<li>- [ ] 畫 σ vs gain 曲線，確認線性關係</li>
+<li>- [ ] 計算各增益 SNR</li>
+<li>- [ ] 開啟 ISP 降噪，重複量測，比較改善</li>
+<li>- [ ] 解析度板測試，比較降噪前後細節</li>
+<li>- [ ] 記錄最佳降噪參數（gain 閾值 / 強度）</li>
+<li>- [ ] 建立雜訊模型（σ = f(gain, exposure)）</li>
+<li>- [ ] 產出雜訊分析報告（σ vs gain / SNR / 降噪建議）</li>
+</ul>
+
   <div class="next-prev">
-    <a href="unit-12.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 12 · 鏡頭陰影校正（LSC）</div></a>
+    <a href="unit-12.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 12 · 鏡頭陰影校正</div></a>
     <a class="np-next" href="unit-14.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 14 · 清晰度、動態範圍與調校工作流</div></a>
   </div>
+</div>
 </div>
 
 <footer>這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>

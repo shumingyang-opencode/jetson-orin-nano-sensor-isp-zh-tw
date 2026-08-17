@@ -251,6 +251,85 @@ gst-launch-1.0 v4l2src device=/dev/video0 ! videoconvert ! autovideosink
 <li>- [ ] 能說出四平台「register 相同、介面不同」的原因。</li>
 </ul>
 
+  <h2>15.13 Register 位元級完整工作流：跨平台 AWB 效果對比</h2>
+<table class="reg-table">
+<tr><th>步驟</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th></tr>
+<tr><td>1. 灰卡出圖</td><td>argus --capture-auto 1</td><td>rpicam --awb auto</td><td>v4l2-ctl（auto）</td></tr>
+<tr><td>2. RGB ratio</td><td>Python 計算 R/G, B/G</td><td>Python 計算 R/G, B/G</td><td>Python 計算 R/G, B/G</td></tr>
+<tr><td>3. 色偏判定</td><td>&lt; 0.05 = PASS</td><td>&lt; 0.05 = PASS</td><td>&lt; 0.05 = PASS</td></tr>
+<tr><td>4. 手動覆蓋</td><td>argus --awb-mode manual</td><td>rpicam --awb manual</td><td>V4L2 awb=0</td></tr>
+<tr><td>5. 色溫設定</td><td>--color-temperature 5500</td><td>--awb-gains 1.0,1.0</td><td>不支援</td></tr>
+</table>
+<div class="demo-block"><div class="demo-label">跨平台 AWB 對比驗證</div><pre><span class="hl-c">#!/usr/bin/env python3</span>
+<span class="hl-c"># cross_platform_awb.py — 比較三平台 AWB 效果</span>
+import numpy as np
+
+platforms = {
+    "Orin Nano": "orin_graycard.raw",
+    "RPi5": "rpi5_graycard.raw",
+    "Orange Pi": "opi_graycard.raw"
+}
+
+for name, f in platforms.items():
+    try:
+        data = np.fromfile(f, dtype=np.uint16).reshape(800, 1280)
+        r = data[0::2, 0::2].mean()
+        g = data[0::2, 1::2].mean()
+        b = data[1::2, 0::2].mean()
+        rg = r / g; bg = b / g
+        deviation = abs(rg - 1.0) + abs(bg - 1.0)
+        verdict = "PASS" if deviation < 0.05 else "NEEDS TUNING"
+        print(f"{name}: R/G={rg:.3f} B/G={bg:.3f} deviation={deviation:.3f} [{verdict}]")
+    except FileNotFoundError:
+        print(f"{name}: file not found")</pre></div>
+
+  <h2>15.14 多層疑難排解決策樹</h2>
+<div class="demo-block"><div class="demo-label">決策樹：跨平台調校移植失敗</div><pre>1. Orin 的 tuning 參數搬到 RPi5 無效？
+   ├─ 是 → 檔案格式不同（XML vs JSON）
+   │       用語不同（gain vs analogue_gain）
+   │       需要參數映射表
+   └─ 否 ┐
+2. 數值範圍不同？
+   ├─ 是 → 歸一化後比較（0-1 range）
+   └─ 否 → 參數語義不同 → 查各平台 API</pre></div>
+
+  <h2>15.15 量測驗證完整 SOP</h2>
+<ol>
+<li><strong>統一測試條件</strong>：相同鏡頭 + 相同光源 + 相同灰卡。</li>
+<li><strong>各平台出圖</strong>：Orin（argus）、RPi5（rpicam）、Orange Pi（v4l2-ctl）。</li>
+<li><strong>RGB ratio 計算</strong>：Python 全平台共用腳本。</li>
+<li><strong>結果比較</strong>：平台 A 色偏 0.03 vs B 0.04 → 差異 &lt; 0.02 = 相當。</li>
+<li><strong>報告產出</strong>：表格格式——平台 × 調校功能 × 是否支援 × 效果。</li>
+</ol>
+<div class="callout"><strong>判讀標準：</strong>各平台 AWB 色偏 &lt; 0.05 = 功能等效；差異 &gt; 0.02 需追查。</div>
+
+  <h2>15.16 四平台终极對照</h2>
+<table>
+<tr><th>功能</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>AWB 手動控制</td><td>✅</td><td>✅</td><td>❌</td><td>✅</td></tr>
+<tr><td>曝光手動控制</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+<tr><td>LSC 可調</td><td>✅</td><td>✅</td><td>❌</td><td>✅</td></tr>
+<tr><td>降噪可調</td><td>✅</td><td>✅</td><td>❌</td><td>✅ + AI</td></tr>
+<tr><td>HDR 控制</td><td>✅</td><td>✅</td><td>有限</td><td>✅ + AI</td></tr>
+<tr><td>銳利化控制</td><td>✅</td><td>✅</td><td>❌</td><td>✅ + AI 超解析度</td></tr>
+<tr><td>ROI 控制</td><td>✅</td><td>有限</td><td>❌</td><td>✅</td></tr>
+<tr><td>即時預覽</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+<tr><td>調參 UI</td><td>NVIDIA tuning tool</td><td>libcamera 向導</td><td>無</td><td>NVIDIA + Holoscan</td></tr>
+<tr><td>跨平台移植</td><td>需格式轉換</td><td>JSON 格式</td><td>N/A</td><td>需格式轉換</td></tr>
+</table>
+
+  <h2>15.17 完整 Bring-up 專案 Checklist</h2>
+<ul>
+<li>- [ ] 選定功能清單（AWB/曝光/LSC/降噪/HDR/銳利化/ROI）</li>
+<li>- [ ] 逐功能在各平台驗證（支援/不支援/效果）</li>
+<li>- [ ] 跨平台對比表格產出</li>
+<li>- [ ] 識別各平台獨有功能</li>
+<li>- [ ] 建立參數映射表（若需移植）</li>
+<li>- [ ] 產出平台選擇建議（依應用場景）</li>
+<li>- [ ] 記錄各平台的調校工具與 workflow</li>
+<li>- [ ] 建立跨平台調校最佳實踐文件</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-14.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 14 · 清晰度、動態範圍與調校工作流</div></a>
     <a class="np-next" href="unit-16.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 16 · 多感測器與實作案例</div></a>

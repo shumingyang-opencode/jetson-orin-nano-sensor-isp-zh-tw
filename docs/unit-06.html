@@ -264,6 +264,99 @@ echo "✅ Bring-up 完成"</pre></div>
 <li>- [ ] 能操作三階段 bring-up 腳本並解讀卡點。</li>
 </ul>
 
+  <h2>6.22 Register 位元級完整工作流：I2C Remap + 位址衝突解法</h2>
+<table class="reg-table">
+<tr><th>步驟</th><th>暫存器（MAX96712）</th><th>值</th><th>說明</th></tr>
+<tr><td>1. 複製</td><td>0x0010</td><td>0x01</td><td>把 link0 資料複製到 link1</td></tr>
+<tr><td>2. link1 alias</td><td>0x0011</td><td>0x37</td><td>link1 感測器映射到 I2C 0x37</td></tr>
+<tr><td>3. link2 alias</td><td>0x0012</td><td>0x38</td><td>link2 感測器映射到 I2C 0x38</td></tr>
+<tr><td>4. link3 alias</td><td>0x0013</td><td>0x39</td><td>link3 感測器映射到 I2C 0x39</td></tr>
+</table>
+<div class="demo-block"><div class="demo-label">I2C 位址衝突完整解法：逐路 remap</div><pre><span class="hl-c"># 四顆 OV9281（均 0x36）→ 分別映到 0x36/0x37/0x38/0x39</span>
+DESER_ADDR=0x48
+
+<span class="hl-c"># 逐路設定 alias（高頻傳輸資料則切換）</span>
+for i in 0 1 2 3; do
+  case $i in
+    0) alias=0x36; base=0x36;;
+    1) alias=0x37; base=0x36;;
+    2) alias=0x38; base=0x36;;
+    3) alias=0x39; base=0x36;;
+  esac
+  
+  <span class="hl-c"># 設定：第 i 路的 remote 0x36 → local alias</span>
+  i2cset -y 0 $DESER_ADDR $((0x0010 + i)) $alias
+  
+  echo "link$i: remote 0x36 → local 0x$(printf '%x' $alias)"
+done
+
+<span class="hl-c"># 驗證：各路可讀</span>
+for alias in 0x36 0x37 0x38 0x39; do
+  val=$(i2ctransfer -y 0 w2@0x$alias 0x30 0x0a r1 2>/dev/null)
+  [ "0x$val" = "0x92" ] && echo "0x$alias: OK" || echo "0x$alias: FAIL"
+done</pre></div>
+
+<div class="callout warn"><strong>鐵則：</strong>GMSL 多路感測器 I2C remap 是唯一解法。若不同型號同位址，不需要 remap；若同型號（同 default ID），一定要 remap。</div>
+
+  <h2>6.23 多層疑難排解決策樹</h2>
+<div class="demo-block"><div class="demo-label">決策樹 A：mode 列出但帶寬不足</div><pre>1. dmesg 有 "bandwidth exceeded"？
+   ├─ 是 ┐
+   │   2. 計算當前模式實際需求：
+   │      BW = W × H × bits × fps / 1e6
+   │      ├─ > 1.5Gbps → 降解析度或幀率
+   │      │              或切換到 8-bit mode（減半）
+   │      └─ < 1.5Gbps → 檢查 ISP pipeline 其他佔用
+   └─ 否 → 非帶寬問題</pre></div>
+
+<div class="demo-block"><div class="demo-label">決策樹 B：v4l2-ctl 有 video0 但 argus 沒相機</div><pre>1. v4l2-ctl --list-devices 有 /dev/video0？
+   ├─ 否 → 驅動問題
+   └─ 是 ┐
+2. argus_camera --list-cameras 出相機？
+   ├─ 否 → argus 四件事缺一：
+   │   ├─ 採集器(reg) → dmesg 有错误？
+   │   ├─ 描述器(=) → media-ctl -p 正常？
+   │   ├─ 物件(O) → 四大物件齊全？
+   │   └─ 工廠(F) → v4l2 media pipeline 完整？
+   └─ 是 → argus 設定問題（mode/camera-id）</pre></div>
+
+  <h2>6.24 量測驗證完整 SOP</h2>
+<ol>
+<li><strong>GMSL lock</strong>：<code>i2cget -y 0 0x48 0x0013</code> → bit 0-3 有 1。</li>
+<li><strong>I2C remap</strong>：設定 alias → <code>i2ctransfer -y 0 w2@0x37 0x30 0x0a r1</code> → 0x92。</li>
+<li><strong>dmesg probe</strong>：<code>dmesg | grep -i "probe\|tegra-camera"</code> → 無 error。</li>
+<li><strong>mode 限定測試</strong>：逐一測可用 mode，記錄每個的字元組數/幀率。</li>
+<li><strong>調整優先序</strong>：解析度 → 位元深 → 幀率 → 執行緒數 → ISP bypass。</li>
+<li><strong>單路 bring-up</strong>：只開 link0 確認出圖 → 再逐路加。</li>
+<li><strong>多路同時</strong>：記錄 VI/ISP bandwidth（v4l2-ctl stats），定義上限。</li>
+</ol>
+<div class="callout"><strong>判讀標準：</strong>GMSL lock ✓、I2C remap ✓、逐路出圖 ✓、多路穩定 ✓ = sensor bring-up 完成。</div>
+
+  <h2>6.25 四平台终极對照</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th><th>推薦</th></tr>
+<tr><td>GMSL 支援</td><td>MAX96712 外掛</td><td>❌ 無</td><td>❌ 無</td><td>內建 GMSL</td><td>GMSL → Orin/Thor</td></tr>
+<tr><td>最大輸入路數</td><td>4 路（MAX96712）</td><td>2 路（22-pin）</td><td>1 路</td><td>8 路</td><td>多路 → Orin/Thor</td></tr>
+<tr><td>ISP bandwidth</td><td>1.5 Gbps</td><td>~800 Mbps</td><td>~400 Mbps</td><td>>3 Gbps</td><td>高幀率 → Orin/Thor</td></tr>
+<tr><td>I2C remap</td><td>✅ 必要</td><td>❌ 不需要</td><td>❌ 不需要</td><td>✅ 必要</td><td>GMSL 專用</td></tr>
+<tr><td>除錯工具</td><td>tegracam/argus</td><td>libcamera</td><td>v4l2-ctl</td><td>argus + Holoscan</td><td>v4l2-ctl 通用</td></tr>
+<tr><td>mode 限制除錯</td><td>ISP bandwidth</td><td>ISP bandwidth</td><td>GPIO / MCLK</td><td>ISP bandwidth</td><td>各有瓶頸</td></tr>
+<tr><td>GMSL 鎖定除錯</td><td>MAX96712 reg</td><td>N/A</td><td>N/A</td><td>內建 reg</td><td>GMSL → Orin/Thor</td></tr>
+</table>
+
+  <h2>6.26 完整 Bring-up 專案 Checklist</h2>
+<ul>
+<li>- [ ] I2C 掃描確認 deserializer 位址（0x48）</li>
+<li>- [ ] GMSL lock 狀態全 1（4 路全 lock）</li>
+<li>- [ ] I2C remap 設定完成並逐路驗證</li>
+<li>- [ ] dmesg 確認 probe 成功（含 ID 讀取）</li>
+<li>- [ ] 逐路 bring-up，每路確認出圖</li>
+<li>- [ ] 記錄每個 mode 的解析度/位元深/幀率</li>
+<li>- [ ] 確認 ISP bandwidth 未超限</li>
+<li>- [ ] 多路同時開測試，記錄掉幀數</li>
+<li>- [ ] 建立 mode 列表表格，標註可用/受限/不可用</li>
+<li>- [ ] 記錄所有問題與解法至除錯日誌</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-05.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 5 · 第一個鏡頭跑起來</div></a>
     <a class="np-next" href="unit-07.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 7 · ISP 管線深入</div></a>

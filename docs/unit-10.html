@@ -243,10 +243,122 @@ argus_camera --mode 0 --ae-auto \
 <li>- [ ] 能比較四平台的曝光控制介面。</li>
 </ul>
 
+  <h2>10.14 Register 位元級完整工作流：AE 驗證——固定 vs 自動曝光</h2>
+<table class="reg-table">
+<tr><th>步驟</th><th>Command</th><th>預期（手動）</th><th>預期（自動）</th></tr>
+<tr><td>1. 手動曝光出圖</td><td>argus --exposure-value 0.016 --gain-value 4.0 --capture-auto 0</td><td>亮度固定</td><td>N/A</td></tr>
+<tr><td>2. 自動曝光出圖</td><td>argus --capture-auto 1</td><td>N/A</td><td>亮度自適應</td></tr>
+<tr><td>3. 直方圖比較</td><td>Python hist()</td><td>直方圖固定</td><td>直方圖隨場景移動</td></tr>
+<tr><td>4. 亮度穩定性</td><td>30 幀 mean ± std</td><td>std &lt; 2</td><td>std &lt; 5（容許微調）</td></tr>
+</table>
+<div class="demo-block"><div class="demo-label">AE 完整驗證腳本：手動 vs 自動</div><pre><span class="hl-c">#!/usr/bin/env python3</span>
+<span class="hl-c"># ae_verify.py — 驗證 AE 功能</span>
+import numpy as np, subprocess, time
+
+def capture(label, auto, exp=0.016, gain=4.0):
+    cmd = [
+        "argus_camera", "--camera-id", "0", "--mode", "0",
+        "--capture-auto", "1" if auto else "0",
+        "--duration", "1", "--output-dir", f"/tmp/ae_{label}"
+    ]
+    if not auto:
+        cmd += ["--exposure-value", str(exp), "--gain-value", str(gain)]
+    subprocess.run(cmd, capture_output=True)
+    import glob
+    raw = glob.glob(f"/tmp/ae_{label}/*.raw")
+    return np.fromfile(raw[0], dtype=np.uint16) if raw else None
+
+<span class="hl-c"># Test 1: Fixed exposure</span>
+fixed = capture("fixed", auto=False)
+print(f"Fixed exposure: mean={fixed.mean():.1f}")
+
+<span class="hl-c"># Test 2: Auto exposure</span>
+auto = capture("auto", auto=True)
+print(f"Auto exposure: mean={auto.mean():.1f}")
+
+<span class="hl-c"># Test 3: Stability (30 frames auto)</span>
+means = []
+for i in range(30):
+    d = capture(f"stab_{i}", auto=True)
+    means.append(d.mean())
+    time.sleep(0.1)
+means = np.array(means)
+print(f"Stability: mean={means.mean():.1f} ± std={means.std():.2f}")
+
+<span class="hl-c"># Verdict</span>
+if means.std() < 5:
+    print("AE VERDICT: PASS (stable)")
+elif means.std() < 10:
+    print("AE VERDICT: MARGINAL")
+else:
+    print("AE VERDICT: FAIL (unstable)")</pre></div>
+
+  <h2>10.15 多層疑難排解決策樹</h2>
+<div class="demo-block"><div class="demo-label">決策樹 A：自動曝光不穩定（畫面忽明忽暗）</div><pre>1. 曝光值在 ~0.016s 快速震盪？
+   ├─ 是 → AE 目標值（target）過高 → 調低 target
+   │       或 integration time 過短 → 加長最短曝光
+   └─ 否 ┐
+2. 偶爾一幀突然改變？
+   ├─ 是 → 異常 frame 觸發重計算
+   │       → 加 hysteresis（遲滯）
+   └─ 否 ┐
+3. 環境光源本身在閃爍？
+   ├─ 是 → 加 flicker rejection（50/60Hz）
+   └─ 否 → 降 convergence speed</pre></div>
+
+<div class="demo-block"><div class="demo-label">決策樹 B：自動曝光過曝/過暗</div><pre>1. 自動曝光後整體過亮？
+   ├─ 是 → target luminance 太高 → 降低 target
+   └─ 否 ┐
+2. 自動曝光後整體過暗？
+   ├─ 是 → target luminance 太低 → 提高 target
+   └─ 否 ┐
+3. 高光 blown（白色剪裁）？
+   ├─ 是 → highlight 預算不足 → 用局部 AE / 包圍曝光
+   └─ 否 → 整體亮度正確</pre></div>
+
+  <h2>10.16 量測驗證完整 SOP</h2>
+<ol>
+<li><strong>手動基線</strong>：固定曝光 0.016s + 增益 4.0，取 RAW → mean ≈ 400。</li>
+<li><strong>自動出圖</strong>：<code>argus_camera --capture-auto 1 --duration 1</code>。</li>
+<li><strong>亮度自適應</strong>：遮擋鏡頭 → 亮度下降；打開 → 亮度上升。</li>
+<li><strong>穩定性</strong>：自動模式下連續 30 幀，量 mean ± std；std &lt; 5 = PASS。</li>
+<li><strong>直方圖</strong>：手動 vs 自動的直方圖形狀差異；自動應趨向 target 分佈。</li>
+<li><strong>目標亮度</strong>：驗證自動模式下的平均亮度 ≈ target（預設 ~128 on 8-bit）。</li>
+<li><strong>收斂時間</strong>：從全遮→全開，量 mean 恢復時間；應 &lt; 1 秒。</li>
+</ol>
+<div class="callout"><strong>判讀標準：</strong>亮度隨場景自適應 ✓、std &lt; 5 ✓、收斂 &lt; 1 秒 ✓ = AE 功能正常。</div>
+
+  <h2>10.17 四平台终极對照</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th><th>推薦</th></tr>
+<tr><td>AE 實作</td><td>3A library (NVIDIA)</td><td>libcamera 3A</td><td>感測器 AEC 硬體</td><td>3A + Holoscan</td><td>各有實現</td></tr>
+<tr><td>AE 控制粒度</td><td>極細（ROI / 區域）</td><td>中</td><td>低（全局）</td><td>極細 + AI</td><td>量產 → Orin/Thor</td></tr>
+<tr><td>Target 可調</td><td>✅ 參數化</td><td>✅ JSON tuning</td><td>❌ 硬體固定</td><td>✅ 參數化</td><td>自訂 → Orin</td></tr>
+<tr><td>收斂速度</td><td>~0.5s</td><td>~0.3s</td><td>~0.2s</td><td>~0.3s</td><td>感測器 ISP 最快</td></tr>
+<tr><td>Highlight 處理</td><td>局部 AE / HDR</td><td>HDR 模式</td><td>有限</td><td>局部 AE + AI</td><td>高動態 → Orin/Thor</td></tr>
+<tr><td>Flicker Rejection</td><td>✅ 50/60Hz</td><td>✅</td><td>部分支援</td><td>✅</td><td>室內照明必開</td></tr>
+<tr><td>ROI AE</td><td>✅ 可程式化</td><td>有限</td><td>❌</td><td>✅</td><td>人臉追蹤 → Orin</td></tr>
+</table>
+
+  <h2>10.18 完整 Bring-up 專案 Checklist</h2>
+<ul>
+<li>- [ ] 手動曝光出圖，記錄基線 mean</li>
+<li>- [ ] 自動曝光出圖，確認亮度隨場景變化</li>
+<li>- [ ] 30 幀自動模式穩定性測試，std &lt; 5</li>
+<li>- [ ] 直方圖比較（手動 vs 自動）</li>
+<li>- [ ] 遮擋/打開鏡頭，量測收斂時間 &lt; 1 秒</li>
+<li>- [ ] 確認 target luminance 設定值</li>
+<li>- [ ] 室內 50/60Hz flicker 測試（若 applicable）</li>
+<li>- [ ] 調整 target，驗證效果變化</li>
+<li>- [ ] 記錄 AE 參數（target/convergence/hysteresis）</li>
+<li>- [ ] 產出 AE 功能報告（穩定性/收斂/自適應）</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-09.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 9 · 各平台 ISP 架構差異</div></a>
-    <a class="np-next" href="unit-11.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 11 · 白平衡與色彩（AWB/CCM）</div></a>
+    <a class="np-next" href="unit-11.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 11 · 白平衡與色彩</div></a>
   </div>
+</div>
 </div>
 
 <footer>這是 NVIDIA Jetson Orin Nano 感測器影像調適繁中教學站 · 由 OpenCode 建置<br>
