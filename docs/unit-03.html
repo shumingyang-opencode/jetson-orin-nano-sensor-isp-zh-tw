@@ -30,7 +30,7 @@
 <div class="guide">
 <h2>I2C 與感測器位址</h2>
 <p>Orin 上感測器經 I2C 控制（GMSL 時透過 deserializer 的 I2C 通道）。OV9281 常見 7-bit 位址 <code>0x36</code>。</p>
-<div class="demo-block"><div class="demo-label">掃描與讀 ID</div><pre>sudo i2cdetect -y <bus>          <span class="hl-c"># 依 DTB 的 i2c 匯流排</span>
+<div class="demo-block"><div class="demo-label">掃描與讀 ID</div><pre>sudo i2cdetect -y &lt;bus&gt;          <span class="hl-c"># 依 DTB 的 i2c 匯流排</span>
 sudo i2cget -y 0 0x36 0x300a     <span class="hl-c"># OV9281 ID 高位 = 0x92</span>
 sudo i2cget -y 0 0x36 0x300b     <span class="hl-c"># = 0x81</span></pre></div>
 
@@ -175,6 +175,65 @@ i2cget -y 0 0x48 0x0013   <span class="hl-c"># link0 lock status</span></pre></d
 <li>設計一個「I2C 健康檢查」腳本：依序掃描所有 I2C 匯流排、列出每個位址的裝置類型、標記異常（回傳值不一致的裝置）。</li>
 <li>若你的 GMSL 系統有 3 條 link，畫出完整的 I2C remap 對照表：每條 link 的 serializer 位址、deserializer local alias、感測器 remote base。</li>
 </ol>
+
+  <h2>3.15 專案級端到端 Worked Example：I2C 工具鏈專案（register 讀寫庫 + 健康檢查）</h2>
+<p>場景：團隊有多顆感測器要 bring-up，每次手動 i2cget/i2cset 容易出錯。這個專案建立一套<strong>可重用的 I2C 工具鏈</strong>：① register 讀寫 Python 庫 ② 全匯流排健康檢查 ③ 兩份 register dump 的自動 diff（呼應 6.17 的需求）。</p>
+<div class="demo-block"><div class="demo-label">工具鏈骨架</div><pre><span class="hl-c"># regctl.py — 包裝 i2ctransfer，支援 8/16-bit 位址</span>
+python3 - <<'EOF'
+import subprocess
+def read16(bus, addr, reg, n=1):
+    hi, lo = reg >> 8, reg & 0xFF
+    out = subprocess.check_output(
+        ['i2ctransfer', '-y', str(bus), f'w2@{addr:x}', f'{hi:x}', f'{lo:x}'] + [f'r{n}'])
+    return int(out.strip(), 16)
+def write16(bus, addr, reg, val):
+    hi, lo = reg >> 8, reg & 0xFF
+    vhi, vlo = val >> 8, val & 0xFF
+    subprocess.run(['i2ctransfer', '-y', str(bus),
+                    f'w4@{addr:x}', f'{hi:x}', f'{lo:x}', f'{vhi:x}', f'{vlo:x}'],
+                   check=True)
+<span class="hl-c"># 使用：</span>
+print(hex(read16(0, 0x36, 0x300A)))   <span class="hl-c"># OV9281 ID → 0x92</span>
+write16(0, 0x36, 0x3500, 0x0050)      <span class="hl-c"># 寫曝光高位</span>
+EOF
+<span class="hl-c"># health_check.sh — 掃全部 bus 並標記異常位址</span>
+for bus in 0 1 2 3 4 5 6 7 8; do
+  echo "== bus $bus =="
+  sudo i2cdetect -y $bus | grep -v "^ " | grep -v "^\s*$"
+done</pre></div>
+<p><strong>專案輸出：</strong><code>regctl.py</code>（讀寫庫）+ <code>health_check.sh</code>（健康檢查）+ <code>regdiff.py</code>（兩份 dump 的 diff）。之後所有感測器 bring-up 都改用這套工具，避免手動打錯位址。</p>
+
+<h2>3.16 量測/驗證 SOP：I2C 通訊驗證</h2>
+<ol>
+<li><strong>匯流排可用</strong>：<code>i2cdetect -y &lt;bus&gt;</code> → 看到預期位址。</li>
+<li><strong>位址格式</strong>：確認感測器是 8-bit 還是 16-bit register 位址（OV 系 16-bit 用 <code>w2</code>）。</li>
+<li><strong>ACK 檢查</strong>：讀回全 0xFF → 位址錯/上拉；全 0x00 → reset/上電；NACK → 裝置不存在。</li>
+<li><strong>寫入回讀</strong>：對任一 register「寫入 → 回讀 → 比對」，驗證真的寫入。</li>
+<li><strong>GMSL 特例</strong>：先確認 deserializer lock，再驗證 remap 後的感測器位址。</li>
+<li><strong>穩定性</strong>：連續讀 100 次 ID，記錄失敗率；&gt;1% 需查線材/上拉。</li>
+</ol>
+<div class="callout"><strong>驗收指標：</strong>ID 讀回正確、寫入回讀一致、連續 100 次讀取 0 失敗。</div>
+
+<h2>3.17 平台間對照：I2C 介面</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>主要 bus</td><td>i2c0 / i2c1 / i2c8…</td><td>i2c22（CSI）</td><td>依型號 i2c3…</td><td>依配置</td></tr>
+<tr><td>GMSL I2C remap</td><td>✅ 常用</td><td>❌</td><td>❌</td><td>✅ 常用</td></tr>
+<tr><td>SCCB 相容</td><td>✅（標準 I2C）</td><td>✅</td><td>✅</td><td>✅</td></tr>
+<tr><td>工具</td><td colspan="4">i2c-tools 全平台相同（i2cdetect / i2cget / i2cset / i2ctransfer）</td></tr>
+<tr><td>時脈預設</td><td>400kHz</td><td>100kHz</td><td>100kHz</td><td>400kHz</td></tr>
+</table>
+<div class="callout"><strong>重點：</strong>I2C 是「平台差異最小」的一層——工具、語法、register 全部共通；唯一要記的是 bus 編號與 GMSL remap 流程。</div>
+
+<h2>3.18 互動式檢核清單：I2C 驗收</h2>
+<ul>
+<li>- [ ] 能用 i2ctransfer 以 16-bit 位址讀 OV9281 ID。</li>
+<li>- [ ] 完成「寫入 → 回讀 → 比對」並記錄一組結果。</li>
+<li>- [ ] 能解釋 0xFF / 0x00 / NACK 三種讀回值的含義。</li>
+<li>- [ ] 若用 GMSL，能說出「lock → remap → 讀感測器」的順序。</li>
+<li>- [ ] 完成一次 100 次連續讀取的穩定性測試。</li>
+<li>- [ ] 能寫出你的平台 I2C bus 編號與感測器位址清單。</li>
+</ul>
 
   <div class="next-prev">
     <a href="unit-02.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 2 · 影像感測器基礎</div></a>

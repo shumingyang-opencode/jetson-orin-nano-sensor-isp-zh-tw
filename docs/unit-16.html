@@ -221,6 +221,65 @@ EOF</pre></div>
 <li>撰寫一個「多感測器壓力測試」腳本：同時開四路，持續運行 1 小時，記錄每路的掉幀數、CPU/記憶體使用量、溫度。找出穩定性瓶頸。</li>
 </ol>
 
+  <h2>16.20 專案級端到端 Worked Example：四路 GMSL 感測器陣列專案</h2>
+<p>場景：自駕小車需要前後左右四顆 OV9281（回顧 16.16）。專案目標：端到端完成「四路 GMSL bring-up → 逐路調校 → 同步驗證 → 健康監控」，全部用專案腳本管理。</p>
+<div class="demo-block"><div class="demo-label">四路陣列專案流程</div><pre><span class="hl-c"># Phase 1 · 逐路 bring-up（一次一顆，回顧 16.7）</span>
+<span class="hl-c">#   每路：lock → ID → probe → 出圖</span>
+<span class="hl-c">#   位址 remap 表：cam0=0x36, cam1=0x56, cam2=0x76, cam3=0x96</span>
+<span class="hl-c"># Phase 2 · 四路同時出圖 + ISP 資源驗證</span>
+for cam in 0 1 2 3; do
+  v4l2-ctl -d /dev/video$cam --stream-mmap=1 --stream-count=1 --stream-to=c$cam.raw &
+done; wait
+<span class="hl-c"># 檢查是否掉幀 → 決定單路解析度上限</span>
+<span class="hl-c"># Phase 3 · 逐路獨立調校（LSC / AWB 各自校正）</span>
+<span class="hl-c"># Phase 4 · 同步驗證（回顧 16.14 時間戳法）</span>
+python3 - <<'EOF'
+import time, subprocess
+r = {}
+for cam in range(4):
+    t0 = time.time()
+    subprocess.run(['v4l2-ctl', '-d', f'/dev/video{cam}',
+                    '--stream-mmap=1', '--stream-count=1', f'--stream-to=c{cam}.raw'])
+    r[cam] = time.time()-t0
+d = max(r.values())-min(r.values())
+print(f'最大時間差 {d*1000:.1f} ms', '< 1ms → 同步好' if d < 0.001 else '→ 需 frame sync')
+EOF
+<span class="hl-c"># Phase 5 · 健康監控 dashboard（回顧 16.19-1）</span>
+<span class="hl-c">#   lock 狀態 / 幀率 / 掉幀數 即時顯示</span></pre></div>
+<p><strong>專案輸出：</strong>四路 bring-up 腳本 + 每路獨立調校檔 + 同步報告 + 監控 dashboard。</p>
+
+<h2>16.21 量測/驗證 SOP：多感測器驗證</h2>
+<ol>
+<li><strong>逐路 bring-up</strong>：一次一顆，lock → ID → probe → 出圖。</li>
+<li><strong>位址管理</strong>：remap 表完整，無衝突。</li>
+<li><strong>同時出圖</strong>：四路同時取幀，檢查掉幀。</li>
+<li><strong>資源驗證</strong>：記錄 ISP bandwidth / CPU 佔用。</li>
+<li><strong>逐路調校</strong>：每顆獨立 LSC / AWB，不可共用。</li>
+<li><strong>同步驗證</strong>：時間戳差 &lt; 1ms 或需硬體 frame sync。</li>
+</ol>
+<div class="callout"><strong>紀律：</strong>多感測器「逐顆 bring-up」——一次只碰一顆，出錯才能歸因。同步永遠是最後一步。</div>
+
+<h2>16.22 平台間對照：多感測器能力</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>GMSL</td><td>✅（MAX96712 類）</td><td>❌</td><td>❌</td><td>✅（HSB）</td></tr>
+<tr><td>同時擷取路數</td><td>3（VI channel）</td><td>1-2</td><td>1-2</td><td>多路</td></tr>
+<tr><td>硬體 frame sync</td><td>✅（GMSL GPIO）</td><td>❌</td><td>❌</td><td>✅</td></tr>
+<tr><td>每路獨立調校</td><td>✅</td><td>✅（有限路）</td><td>⚠️</td><td>✅</td></tr>
+<tr><td>健康監控</td><td>V4L2 / 自寫</td><td>libcamera</td><td>V4L2</td><td>Holoscan</td></tr>
+</table>
+<div class="callout"><strong>結論：</strong>「多路 + GMSL + 同步」是 Orin / Thor 的護城河；RPi5 / Orange Pi 只適合單路或簡單雙路。多感測器專案直接選 Orin 以上。</div>
+
+<h2>16.23 互動式檢核清單：多感測器驗收</h2>
+<ul>
+<li>- [ ] 能背出「逐顆 bring-up、一次一顆」的紀律與理由。</li>
+<li>- [ ] 完成一次多顆感測器的位址 remap 規劃。</li>
+<li>- [ ] 能驗證多路同時出圖並解讀掉幀。</li>
+<li>- [ ] 能說出何時需要硬體 frame sync。</li>
+<li>- [ ] 能比較四平台的多感測器能力。</li>
+<li>- [ ] 能寫出你平台每顆感測器的 lock / 位址 / media 節點清單。</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-15.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 15 · 四平台影像調校功能比較</div></a>
     <a class="np-next" href="index.html"><div class="np-label">課程完成 →</div><div class="np-name">回首頁 · 單元教學目錄</div></a>

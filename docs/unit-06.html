@@ -214,6 +214,56 @@ v4l2-ctl -d /dev/video0 --stream-mmap=1 --stream-count=1 --stream-to=test.raw</p
 <li>若你的 GMSL 系統在「高溫環境」下偶爾 probe 失敗，設計一個溫度-成功率的測試方案。</li>
 </ol>
 
+  <h2>6.18 專案級端到端 Worked Example：三階段 bring-up 自動化專案</h2>
+<p>場景：公司有多種載板 + 多種感測器組合，每次 bring-up 都是人工逐步確認，耗時且易漏。專案目標：把單元 6 的四件事（電源 / clock / I2C / MIPI）與決策樹做成<strong>自動化的三階段 bring-up 腳本</strong>，一鍵輸出「目前卡在哪一層」。</p>
+<div class="demo-block"><div class="demo-label">bringup.sh（三階段骨架）</div><pre>#!/bin/bash
+echo "== Phase 1 · 硬體 / I2C 層 =="
+sudo i2cdetect -y 0                      <span class="hl-c"># 看得到 0x36（或 remap 位址）？</span>
+sudo i2cget -y 0 0x36 0x300a             <span class="hl-c"># 讀到 0x92？</span>
+if [ $? -ne 0 ]; then echo "卡在 Phase 1 → 查電源 / clock / reset / 位址"; exit 1; fi
+
+echo "== Phase 2 · 驅動層 =="
+dmesg | grep -i -E "ov9281|tegra-camera|vi5"   <span class="hl-c"># probe success？</span>
+ls /dev/video* 2>/dev/null || { echo "卡在 Phase 2 → 查 DTB / 驅動"; exit 1; }
+
+echo "== Phase 3 · 出圖層 =="
+v4l2-ctl -d /dev/video0 --stream-mmap=1 --stream-count=1 --stream-to=t.raw
+if [ $? -ne 0 ]; then echo "卡在 Phase 3 → 查 media 管線 / 格式"; exit 1; fi
+echo "✅ Bring-up 完成"</pre></div>
+<p><strong>專案輸出：</strong><code>bringup.sh</code>（單一感測器）+ <code>bringup_all.sh</code>（迴圈處理多顆）。每階段失敗輸出「建議下一步」——把單元 6 的決策樹變成程式碼。</p>
+
+<h2>6.19 量測/驗證 SOP：Sensor Bring-up 驗證</h2>
+<ol>
+<li><strong>電源</strong>：電表 / 示波器確認 AVDD / DVDD 電壓與時序（依 datasheet）。</li>
+<li><strong>Clock</strong>：示波器量 MCLK；或看 dmesg 的 clock 錯誤。</li>
+<li><strong>Reset</strong>：確認 reset GPIO 依時序釋放（太早下 I2C → 寫入無效）。</li>
+<li><strong>I2C</strong>：i2cdetect + 讀 ID（GMSL 先驗 lock）。</li>
+<li><strong>Serdes（GMSL）</strong>：vendor 工具確認每條 link lock。</li>
+<li><strong>MIPI / 出圖</strong>：dmesg 無 CSI error + 取到一幀。</li>
+</ol>
+<div class="callout"><strong>口訣：</strong>lock → channel → ID → probe → 出圖。每一步卡住就停在該層，不要往下走。</div>
+
+<h2>6.20 平台間對照：Bring-up 流程</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>上電時序管理</td><td>DTB + 模組設計</td><td>硬體固定</td><td>硬體固定</td><td>DTB + 模組設計</td></tr>
+<tr><td>Serdes</td><td>GMSL（需 lock）</td><td>無（CSI 直連）</td><td>無</td><td>GMSL（HSB）</td></tr>
+<tr><td>RTCPU 韌體</td><td>✅ 需確認</td><td>無</td><td>無</td><td>✅ 需確認</td></tr>
+<tr><td>驅動載入</td><td>tegracam + DTB</td><td>核心 patch</td><td>核心 patch</td><td>tegracam + DTB</td></tr>
+<tr><td>除錯工具</td><td colspan="4">dmesg / i2c-tools / media-ctl / v4l2-ctl 全平台相同</td></tr>
+</table>
+<div class="callout"><strong>重點：</strong>Orin / Thor 多兩層（GMSL + RTCPU），RPi5 / Orange Pi 較單純；但「逐層向上、先底層後高層」的哲學完全一致。</div>
+
+<h2>6.21 互動式檢核清單：Bring-up 驗收</h2>
+<ul>
+<li>- [ ] 能背出 bring-up 四件事（電源 / clock / I2C / MIPI）並逐項驗證。</li>
+<li>- [ ] 能說出「RESET 未釋放就下 I2C」的症狀與後果。</li>
+<li>- [ ] 能執行 GMSL 三步（lock → 通道 → 感測器）。</li>
+<li>- [ ] 完成一次完整 bring-up 並記錄所有驗證輸出。</li>
+<li>- [ ] 能解釋「probe success ≠ 出圖成功」。</li>
+<li>- [ ] 能操作三階段 bring-up 腳本並解讀卡點。</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-05.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 5 · 第一個鏡頭跑起來</div></a>
     <a class="np-next" href="unit-07.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 7 · ISP 管線深入</div></a>

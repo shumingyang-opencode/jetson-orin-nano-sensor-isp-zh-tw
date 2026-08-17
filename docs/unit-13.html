@@ -214,6 +214,57 @@ EOF
 <li>比較 2D NR 和 3D NR 在「靜態場景」和「動態場景」下的效果差異，寫出你的結論和建議的使用場景。</li>
 </ol>
 
+  <h2>13.16 專案級端到端 Worked Example：雜訊預算與降噪調校專案</h2>
+<p>場景：低光缺陷檢測（回顧 13.12 場景）需要「雜訊可接受」與「缺陷細節保留」的平衡。專案目標：建立<strong>雜訊預算</strong>，從量測感測器本質 → 定增益上限 → 調 NR level，全流程量化。</p>
+<div class="demo-block"><div class="demo-label">專案流程</div><pre><span class="hl-c"># Phase 1 · 感測器本質量測（回顧 13.6）</span>
+for g in 1 2 4 8; do
+  v4l2-ctl -d /dev/v4l-subdev0 -c analogue_gain=$g
+  argus_camera --mode 0 --capture-auto 1 --raw-file g$g.raw --duration 1
+done
+<span class="hl-c"># 畫 σ vs gain → 找 σ 暴增點 → 定增益上限（例：max gain 4）</span>
+<span class="hl-c"># Phase 2 · 定雜訊預算：目標 SNR ≥ 30dB（σ/S < 3.2%）</span>
+<span class="hl-c"># Phase 3 · 補光 / 曝光調整，讓預算在正常場景達標</span>
+<span class="hl-c"># Phase 4 · NR 階梯（回顧 13.12 方法）</span>
+for level in 0 1 2 3 4 5; do
+  argus_camera --mode 0 --nr-2d $level --duration 2 --raw-file n$level.raw
+done
+<span class="hl-c"># 找「SNR 提升 ≥ 3dB 且缺陷細節不模糊」的 level</span>
+<span class="hl-c"># Phase 5 · DPC 驗證：黑框 RAW 的 max 應被壓制</span>
+<span class="hl-c"># Phase 6 · 動態場景確認無鬼影（時間 NR 慎用）</span></pre></div>
+<p><strong>專案輸出：</strong>σ vs gain 曲線、增益上限決策、NR level 選擇、DPC 驗證報告。這份「雜訊預算書」是影像品質的總依據。</p>
+
+<h2>13.17 量測/驗證 SOP：雜訊驗證</h2>
+<ol>
+<li><strong>σ vs gain</strong>：固定曝光逐級增益，量平坦區 σ。</li>
+<li><strong>SNR 計算</strong>：<code>20·log10(訊號/σ)</code>，對照目標預算。</li>
+<li><strong>DPC 驗證</strong>：黑框 RAW，統計固定亮點；max 應被壓制。</li>
+<li><strong>NR 階梯</strong>：NR level vs SNR 曲線，找拐點。</li>
+<li><strong>動態測試</strong>：移動物體下檢查時間 NR 鬼影。</li>
+<li><strong>增益上限</strong>：把 σ 暴增點的增益寫成上限。</li>
+</ol>
+<div class="callout"><strong>紀律：</strong>先源頭（光源 / 曝光 / 增益）後收尾（NR）；用 RAW 量 σ，別拿 NV12 猜。</div>
+
+<h2>13.18 平台間對照：雜訊處理</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>空間 NR</td><td>✅ ISP 內建</td><td>✅ libcamera</td><td>⚠️ 感測器</td><td>✅ ISP 內建</td></tr>
+<tr><td>時間 NR</td><td>✅（可調強度）</td><td>✅</td><td>⚠️</td><td>✅ + AI 降噪</td></tr>
+<tr><td>DPC</td><td>✅ 內建</td><td>✅</td><td>⚠️</td><td>✅</td></tr>
+<tr><td>NR 調校介面</td><td>level 參數（有限）</td><td>tuning file（完整）</td><td>有限</td><td>level + AI</td></tr>
+<tr><td>量測方法</td><td colspan="4">RAW σ / SNR 全平台共用</td></tr>
+</table>
+<div class="callout"><strong>重點：</strong>雜訊量測是平台無關的；NR 的「可調深度」RPi5 最深、Orin / Thor 用 level 參數、Orange Pi 最受限——但「先源頭後收尾」的紀律不變。</div>
+
+<h2>13.19 互動式檢核清單：雜訊驗收</h2>
+<ul>
+<li>- [ ] 能畫出 σ vs gain 曲線並解釋「增益補曝光」為何傷 SNR。</li>
+<li>- [ ] 完成一次 SNR 預算計算並記錄。</li>
+<li>- [ ] 能驗證 DPC 是否壓制黑框亮點。</li>
+<li>- [ ] 能做 NR 階梯並找到拐點。</li>
+<li>- [ ] 能辨別空間 / 時間 NR 造成的不同現象（顆粒 vs 鬼影）。</li>
+<li>- [ ] 能寫下你平台的增益上限與 NR 設定。</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-12.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 12 · 鏡頭陰影校正（LSC）</div></a>
     <a class="np-next" href="unit-14.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 14 · 清晰度、動態範圍與調校工作流</div></a>

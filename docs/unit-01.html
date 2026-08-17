@@ -185,6 +185,82 @@ argus_camera --camera 0,1,2,3 --mode 0 --duration 5</pre></div>
 <li>撰寫一個 bash script，自動化驗證 Orin Nano 上所有 `/dev/videoN` 是否都能正常串流，並輸出每路的「通過/失敗 + 幀數」。</li>
 </ol>
 
+  <h2>1.19 專案級端到端 Worked Example：新載板 bring-up 專案 — 從 DT overlay 到第一張圖</h2>
+<p>場景：你拿到一張新載板，上面只有一顆 OV9281（CSI-2 直連、2-lane、I2C 0x36、MCLK 24MHz），JetPack 已刷好但相機完全未設定。這個專案把單元 1–6 的知識串成<strong>端到端</strong>流程：從「零」到「第一張圖 + 第一份 RAW」，並留下可重複的專案腳本。</p>
+<div class="demo-block"><div class="demo-label">Phase 0 · 事前盤點（10 分鐘）</div><pre>cat /etc/nv_tegra_release          <span class="hl-c"># 記錄 JetPack 版本</span>
+dmesg | grep -i tegra-camera-rtcpu <span class="hl-c"># 預期：rtcpu 正常載入、無 error</span>
+ls /boot/dtb/                      <span class="hl-c"># 記錄現有 DTB / overlay</span></pre></div>
+<div class="demo-block"><div class="demo-label">Phase 1 · 建立 DT overlay（30 分鐘）</div><pre>cat &gt; ov9281-custom.dts &lt;&lt;'EOF'
+/dts-v1/;
+/plugin/;
+/ {
+    overlay-name = "ov9281 custom cam0";
+    fragment@0 {
+        target = &lt;&amp;i2c8&gt;;
+        __overlay__ {
+            ov9281@36 {
+                compatible = "ovti,ov9281";
+                reg = &lt;0x36&gt;;
+                clocks = &lt;&amp;clk_ext_cam 24000000&gt;;
+                clock-frequency = &lt;24000000&gt;;
+                reset-gpios = &lt;&amp;gpio 132 0&gt;;
+                port {
+                    ov9281_out: endpoint {
+                        remote-endpoint = &lt;&amp;csi_in0&gt;;
+                        data-lanes = &lt;1 2&gt;;
+                        clock-lanes = &lt;0&gt;;
+                    };
+                };
+            };
+        };
+    };
+};
+EOF
+dtc -@ -I dts -O dtb -o ov9281-custom.dtbo ov9281-custom.dts
+sudo cp ov9281-custom.dtbo /boot/dtb/overlays/</pre></div>
+<div class="demo-block"><div class="demo-label">Phase 2 · 套用並驗證（20 分鐘）</div><pre>sudo reboot
+dmesg | grep -i ov9281        <span class="hl-c"># 預期：probe success + 讀到 chip ID</span>
+v4l2-ctl --list-devices       <span class="hl-c"># 預期：出現 /dev/video0 + /dev/v4l-subdev0</span>
+media-ctl -p -d /dev/media0   <span class="hl-c"># 預期：ov9281 → csi → vi 完整鏈路</span></pre></div>
+<div class="demo-block"><div class="demo-label">Phase 3 · 出圖 + RAW 驗證（10 分鐘）</div><pre>argus_camera --mode 0 --capture-auto 1 --duration 1   <span class="hl-c"># 預期：成功存圖</span>
+v4l2-ctl -d /dev/video0 --stream-mmap=1 --stream-count=1 --stream-to=first.raw
+ls -l first.raw   <span class="hl-c"># 預期：1280x800x2 = 2,048,000 B（10-bit 以 16-bit 存）</span>
+<span class="hl-c"># 第一張圖到手 = 專案里程碑 1 完成</span></pre></div>
+<p><strong>專案驗收標準：</strong>① overlay 套用後 dmesg 無 error ② argus 出圖成功 ③ RAW 大小正確。失敗時回到對應單元：DTB → 單元 4、I2C → 單元 3、出圖 → 單元 5、時序 → 單元 6。</p>
+
+<h2>1.20 量測/驗證 SOP：平台相機生態能力驗證</h2>
+<p>目的：確認這張板子的相機能力與規格聲明相符，留下可對比的基線。換硬體或重刷 JetPack 後重跑。</p>
+<ol>
+<li><strong>系統與韌體</strong>：<code>cat /etc/nv_tegra_release</code>；<code>dmesg | grep -i rtcpu</code> → RTCPU 正常載入。</li>
+<li><strong>列舉</strong>：<code>v4l2-ctl --list-devices</code> → 記錄 /dev/videoN 與 subdev 數量。</li>
+<li><strong>拓撲</strong>：<code>media-ctl -p -d /dev/media0</code> → 記錄感測器→CSI→VI 鏈路完整性。</li>
+<li><strong>能力</strong>：<code>v4l2-ctl -d /dev/video0 --list-formats-ext</code> → 記錄 fourcc、尺寸、幀率。</li>
+<li><strong>功能</strong>：<code>argus_camera --list-cameras</code> + <code>argus_camera --mode 0 --capture-auto 1 --duration 1</code> 出圖。</li>
+<li><strong>頻寬</strong>：對最高模式算 <code>W×H×bits×fps</code>（回顧 1.13），記錄餘裕比例。</li>
+</ol>
+<div class="callout"><strong>驗收指標：</strong>出圖成功、列舉完整、最高模式頻寬估算 &lt; 可用頻寬 80%。結果寫入 team 基線文件。</div>
+
+<h2>1.21 平台間對照：相機生態</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>CSI 輸入</td><td>MIPI CSI-2 + GMSL</td><td>MIPI CSI-2（22-pin）</td><td>MIPI CSI-2（部分型號）</td><td>MIPI CSI-2 + GMSL（HSB）</td></tr>
+<tr><td>GMSL 多感測器</td><td>✅（MAX96712 類）</td><td>❌（需外接）</td><td>❌</td><td>✅ 內建</td></tr>
+<tr><td>ISP 形態</td><td>NVIDIA ISP（自動化）</td><td>libcamera（開源）</td><td>感測器內建（陽春）</td><td>Blackwell + Holoscan</td></tr>
+<tr><td>相機框架</td><td>Argus / V4L2</td><td>libcamera / V4L2</td><td>V4L2</td><td>Argus / Holoscan</td></tr>
+<tr><td>VI/擷取通道</td><td>3 個 VI channel</td><td>1-2 路</td><td>1-2 路</td><td>多路</td></tr>
+</table>
+<div class="callout"><strong>結論：</strong>Orin 與 Thor 走「工業多感測器」路線，RPi5 走「開源學習」路線，Orange Pi 走「最低成本」路線。選平台第一問：「要不要 GMSL、要幾路相機」。</div>
+
+<h2>1.22 互動式檢核清單：相機生態驗收</h2>
+<ul>
+<li>- [ ] 能說出 Orin Nano 的 CSI + GMSL 架構與各自適用場景。</li>
+<li>- [ ] 能畫出 Argus 與 V4L2 在調校流程中的分工。</li>
+<li>- [ ] 完成一次「列舉 → 出圖 → RAW 大小驗證」並記錄。</li>
+<li>- [ ] 能寫出自己平台的 lane 數、感測器型號、I2C 位址。</li>
+<li>- [ ] 能估算最高模式的 CSI 頻寬並判斷是否安全。</li>
+<li>- [ ] 能比較 Orin / RPi5 / Orange Pi / Thor 的生態差異並說出選型理由。</li>
+</ul>
+
   <div class="next-prev">
     <a href="index.html"><div class="np-label">← 上一層</div><div class="np-name">單元教學目錄</div></a>
     <a class="np-next" href="unit-02.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 2 · 影像感測器基礎</div></a>

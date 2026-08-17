@@ -191,6 +191,60 @@ EOF</pre></div>
 <li>嘗試用 Argus 的 `--exposure-time` 參數固定不同曝光值，觀察 OV9281 在「運動物體」下的果凍變化，寫出你的觀察結論。</li>
 </ol>
 
+  <h2>2.17 專案級端到端 Worked Example：感測器特性實驗台專案</h2>
+<p>場景：你負責驗收一批新的 OV9281 模組，需要建立一座「感測器特性實驗台」，把單元 2 的光→RAW、Bayer、global shutter 知識變成<strong>可重複的量測流程</strong>，最終產出一份「每顆模組的感測器特性報告」。</p>
+<div class="demo-block"><div class="demo-label">實驗台流程</div><pre><span class="hl-c"># Step 1 · 上電 + 讀 ID（驗證感測器活著）</span>
+sudo i2cget -y 0 0x36 0x300a   <span class="hl-c"># 0x92</span>
+sudo i2cget -y 0 0x36 0x300b   <span class="hl-c"># 0x81</span>
+<span class="hl-c"># Step 2 · 全遮鏡頭：量黑位</span>
+argus_camera --mode 0 --capture-auto 1 --raw-file blk.raw --duration 1
+python3 - <<'EOF'
+import numpy as np
+raw = np.fromfile('blk.raw', dtype=np.uint16)
+print('黑位 mean', round(raw.mean(),1), 'max', raw.max())  # 預期接近 datasheet 標稱
+EOF
+<span class="hl-c"># Step 3 · 雷射亮點：判定 Bayer order（回顧 8.17 方法）</span>
+<span class="hl-c"># Step 4 · 高速轉盤：確認 global shutter 無果凍</span>
+<span class="hl-c">#   （若出現傾斜/彎曲 → 可能被切成 rolling 模式）</span>
+<span class="hl-c"># Step 5 · 曝光階梯：確認響應線性（回顧 10.9）</span>
+for e in 1000 2000 4000 8000 16000; do
+  v4l2-ctl -d /dev/v4l-subdev0 -c exposure=$e
+  argus_camera --mode 0 --capture-auto 1 --raw-file e$e.raw --duration 1
+done</pre></div>
+<p><strong>專案輸出：</strong>每顆模組一份 <code>sensor_report.csv</code>（ID、黑位、Bayer order、shutter 型態、曝光線性斜率）。這份報告就是後續 ISP 調校（單元 11–14）的「感測器本質」基線。</p>
+
+<h2>2.18 量測/驗證 SOP：感測器基本特性驗證</h2>
+<ol>
+<li><strong>ID 驗證</strong>：讀 ID register 與 datasheet 比對（OV9281 → 0x92 0x81）。</li>
+<li><strong>黑位量測</strong>：全遮鏡頭取 RAW，記錄 min/mean；與 datasheet 標稱差 &gt; 10% 需追查。</li>
+<li><strong>Bayer order</strong>：雷射亮點法判定起點；設錯 → 色彩全錯（回顧 8.17）。</li>
+<li><strong>Shutter 型態</strong>：高速移動物體下檢查有無果凍；確認 DTB mode 與感測器實際模式一致。</li>
+<li><strong>曝光線性</strong>：固定增益逐級拉曝光，檢查 RAW 亮度是否線性。</li>
+<li><strong>雜訊基線</strong>：量各增益的 σ，找出「甜蜜點」與上限（回顧 13.6）。</li>
+</ol>
+<div class="callout"><strong>驗收指標：</strong>ID 相符、黑位在標稱 ±10%、Bayer 判定成功、global shutter 無果凍、曝光線性 R² &gt; 0.98。</div>
+
+<h2>2.19 平台間對照：感測器基本特性</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>讀 ID 工具</td><td>i2cget / i2ctransfer</td><td>i2ctransfer</td><td>i2ctransfer</td><td>i2ctransfer</td></tr>
+<tr><td>取 RAW</td><td>argus --raw-file</td><td>rpicam --raw</td><td>v4l2-ctl --stream-to</td><td>argus / Holoscan</td></tr>
+<tr><td>曝光控制</td><td>tegracam exposure</td><td>libcamera ExposureTime</td><td>V4L2 exposure</td><td>SensorMode</td></tr>
+<tr><td>感測器 register</td><td colspan="4">完全相同（0x300A ID、0x3500 曝光、0x350A 增益）</td></tr>
+<tr><td>特性分析</td><td colspan="4">RAW 分析腳本可 100% 共用（平台無關）</td></tr>
+</table>
+<div class="callout"><strong>重點：</strong>感測器特性是「平台無關」的——換平台只換取 RAW 的指令，分析腳本與判讀標準全部沿用。</div>
+
+<h2>2.20 互動式檢核清單：感測器特性驗收</h2>
+<ul>
+<li>- [ ] 能畫出「光子 → 電子 → 電壓 → ADC → RAW」流程並標出可調點。</li>
+<li>- [ ] 能說出 OV9281 / OV5640 / IMX219 的解析度、快門、I2C 位址。</li>
+<li>- [ ] 完成一次「全遮黑位 + 雷射 Bayer + 曝光階梯」量測並記錄。</li>
+<li>- [ ] 能用高速移動物體分辨 global 與 rolling shutter。</li>
+<li>- [ ] 能解釋「換模式後曝光感變了」的根本原因（每行時間）。</li>
+<li>- [ ] 能寫出感測器特性報告並說出它如何餵給後續調校。</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-01.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 1 · 平台相機生態總覽</div></a>
     <a class="np-next" href="unit-03.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 3 · 感測器通訊介面</div></a>

@@ -204,6 +204,53 @@ gst-launch-1.0 v4l2src device=/dev/video0 ! videoconvert ! autovideosink
 <li>比較四個平台的「調校學習曲線」：從「零經驗」到「能獨立完成調校」，每個平台大概需要多少時間和資源？</li>
 </ol>
 
+  <h2>15.13 專案級端到端 Worked Example：平台選型與標竿專案</h2>
+<p>場景：新專案要在四平台中選一，需求是「工業環境、4 路 GMSL、自動化調校」。專案目標：用<strong>證據</strong>而不是喜好做選型——在各平台跑同一套標竿，輸出決策矩陣。</p>
+<div class="demo-block"><div class="demo-label">選型專案流程</div><pre><span class="hl-c"># Step 1 · 需求量化（回顧 9.6 決策流程）</span>
+<span class="hl-c">#   列出：感測器數、距離（GMSL?）、調校深度、預算、供電 / 散熱</span>
+<span class="hl-c"># Step 2 · 標竿測試（每平台各跑一次，回顧 9.14 SOP）</span>
+<span class="hl-c">#   出圖三件套 + RAW 品質 + 延遲 + 多路能力</span>
+<span class="hl-c"># Step 3 · 能力矩陣（回顧 15.12-1）</span>
+<span class="hl-c">#   列功能 × 平台，1-5 分 + 權重</span>
+<span class="hl-c"># Step 4 · 風險評估</span>
+<span class="hl-c">#   Orin: GMSL ✅ / 黑箱 ⚠️；RPi5: 開源 ✅ / 無 GMSL ❌</span>
+<span class="hl-c">#   Orange Pi: 便宜 ✅ / 陽春 ⚠️；Thor: 強 ✅ / 貴 ⚠️</span>
+<span class="hl-c"># Step 5 · 決策文件：結論 + 理由 + 備援方案</span></pre></div>
+<p><strong>專案輸出：</strong>標竿數據 + 能力矩陣 + 決策文件。選型結果可用數據回推，不怕換人換意見。</p>
+
+<h2>15.14 量測/驗證 SOP：跨平台功能對照驗證</h2>
+<ol>
+<li><strong>出圖</strong>：每平台跑「列舉 → 出圖 → RAW」三件套。</li>
+<li><strong>RAW 品質</strong>：同一顆感測器跑同一套 rawstat。</li>
+<li><strong>延遲</strong>：量端到端延遲（取幀 → 顯示）。</li>
+<li><strong>多路</strong>：測試可同時開幾路相機。</li>
+<li><strong>調校深度</strong>：逐項核對 LSC / AWB / NR / HDR 可調性。</li>
+<li><strong>GMSL</strong>：確認有無、幾路、remap 流程。</li>
+</ol>
+<div class="callout"><strong>驗收指標：</strong>每平台一份標竿報告，同一量尺可比較。</div>
+
+<h2>15.15 平台間對照：調校功能（本單元主軸）</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>AE/AWB 自動化</td><td>✅✅</td><td>✅</td><td>⚠️（感測器）</td><td>✅✅</td></tr>
+<tr><td>LSC</td><td>✅</td><td>✅</td><td>⚠️</td><td>✅</td></tr>
+<tr><td>NR / Sharpen</td><td>✅✅</td><td>✅</td><td>⚠️</td><td>✅✅ + AI</td></tr>
+<tr><td>HDR</td><td>✅</td><td>✅</td><td>⚠️</td><td>✅✅</td></tr>
+<tr><td>GMSL 多感測器</td><td>✅</td><td>❌</td><td>❌</td><td>✅（HSB）</td></tr>
+<tr><td>可視性</td><td>低（自動化）</td><td>高</td><td>高</td><td>低</td></tr>
+</table>
+<div class="callout"><strong>結論：</strong>Orin 是「工業自動化 + GMSL」的中堅；RPi5 是開源學習；Orange Pi 是成本最低；Thor 是次世代高階。選擇依「需求權重」而非「功能多寡」。</div>
+
+<h2>15.16 互動式檢核清單：跨平台驗收</h2>
+<ul>
+<li>- [ ] 能畫出四平台的能力比較表並標出權重。</li>
+<li>- [ ] 完成一次「同一顆感測器、多平台」的標竿比較。</li>
+<li>- [ ] 能用功能對應法寫出 RPi5 ↔ Orin 的翻譯表。</li>
+<li>- [ ] 能說明「搬流程、不搬參數」的遷移原則。</li>
+<li>- [ ] 能針對你的專案需求選出平台並列出理由。</li>
+<li>- [ ] 能說出四平台「register 相同、介面不同」的原因。</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-14.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 14 · 清晰度、動態範圍與調校工作流</div></a>
     <a class="np-next" href="unit-16.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 16 · 多感測器與實作案例</div></a>

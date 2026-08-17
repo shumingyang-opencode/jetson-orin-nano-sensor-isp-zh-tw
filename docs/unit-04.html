@@ -215,6 +215,57 @@ sudo reboot</pre></div>
 <li>若你的 DTB overlay 套用後 dmesg 出現 "Unable to match" 錯誤，設計一個系統化的排查流程找出根本原因。</li>
 </ol>
 
+  <h2>4.16 專案級端到端 Worked Example：客製感測器驅動整合專案</h2>
+<p>場景：一顆非官方感測器（假設 OV2775，I2C 0x10、4-lane、RAW10）要在 Orin 上跑起來。專案目標：從驅動 stub → DTB overlay → probe → argus 列舉，端到端整合，並把流程文件化。</p>
+<div class="demo-block"><div class="demo-label">專案里程碑</div><pre><span class="hl-c"># M1 · 驅動骨架（依 tegracam 慣例，OV9281 為藍本）</span>
+<span class="hl-c">#   - 建立 ov2775.c：init table + get/set controls</span>
+<span class="hl-c">#   - compatible = "ovti,ov2775"</span>
+<span class="hl-c"># M2 · DTB overlay（回顧 4.12 流程）</span>
+<span class="hl-c">#   - fragment target = csi_i2c bus，reg = 0x10</span>
+<span class="hl-c">#   - mode0：4-lane、RAW10、active_w/h、pixel_phase</span>
+<span class="hl-c"># M3 · 編譯 + 套用 + 重開機</span>
+dtc -@ -I dts -O dtb -o ov2775.dtbo ov2775.dts
+sudo cp ov2775.dtbo /boot/dtb/overlays/ && sudo reboot
+<span class="hl-c"># M4 · 驗證鏈路（逐層確認）</span>
+dmesg | grep -i ov2775          <span class="hl-c"># probe success + ID</span>
+media-ctl -p -d /dev/media0     <span class="hl-c"># ov2775 出現在拓撲</span>
+v4l2-ctl -d /dev/v4l-subdev0 --list-ctrls   <span class="hl-c"># exposure/gain 在列</span>
+argus_camera --list-cameras     <span class="hl-c"># 看得到 ov2775</span>
+argus_camera --mode 0 --capture-auto 1 --duration 1   <span class="hl-c"># 出圖</span></pre></div>
+<p><strong>專案驗收：</strong>四個里程碑全過 = 整合完成。若 M4 卡住，依 4.15 挑戰題 3 的方法做系統化排查（dmesg "Unable to match" → compatible string 對不上）。</p>
+
+<h2>4.17 量測/驗證 SOP：DTB/驅動修改驗證</h2>
+<ol>
+<li><strong>套用確認</strong>：<code>dmesg | grep -i "camera|tegra-camera"</code> → 無 error。</li>
+<li><strong>probe 確認</strong>：<code>dmesg | grep -i &lt;sensor&gt;</code> → probe success + 讀到 ID。</li>
+<li><strong>拓撲確認</strong>：<code>media-ctl -p</code> → 感測器→CSI→VI 完整。</li>
+<li><strong>controls 確認</strong>：<code>v4l2-ctl -d /dev/v4l-subdev0 --list-ctrls</code> → exposure/gain 範圍符合 mode。</li>
+<li><strong>列舉確認</strong>：<code>argus_camera --list-cameras</code> → 相機出現。</li>
+<li><strong>出圖確認</strong>：<code>argus_camera --mode 0 --capture-auto 1 --duration 1</code> + 取 RAW 驗證尺寸/格式。</li>
+</ol>
+<div class="callout warn"><strong>陷阱提醒：</strong>「dmesg 沒 error」≠ 生效——以「列得出 + 取得到 + 尺寸對」三項為準（回顧 4.12）。</div>
+
+<h2>4.18 平台間對照：驅動框架</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>感測器框架</td><td>tegracam</td><td>libcamera IPA</td><td>V4L2 subdev</td><td>tegracam + Holoscan</td></tr>
+<tr><td>設定介面</td><td>DTB mode + overlay</td><td>dtoverlay + 核心 patch</td><td>overlay / 核心</td><td>DTB + Holoscan</td></tr>
+<tr><td>controls 來源</td><td>tegracam 統一</td><td>libcamera 控制</td><td>V4L2 原生</td><td>tegracam</td></tr>
+<tr><td>自寫驅動難度</td><td>中（tegracam 慣例）</td><td>中（libcamera pipeline）</td><td>低（原生 V4L2）</td><td>高（需 Holoscan 對接）</td></tr>
+<tr><td>調校介面</td><td>NVIDIA tuning</td><td>tuning file（JSON）</td><td>無 / 陽春</td><td>NVIDIA tuning</td></tr>
+</table>
+<div class="callout"><strong>重點：</strong>Orin / RPi5 都有「框架層」幫你統一 controls；Orange Pi 最接近底層；Thor 與 Orin 同框架但加上 Holoscan 應用層。</div>
+
+<h2>4.19 互動式檢核清單：驅動 / DTB 驗收</h2>
+<ul>
+<li>- [ ] 能畫出 tegracam 的 probe 鏈路（DTB → I2C → media → video device）。</li>
+<li>- [ ] 能看懂並修改一個 camera 節點的 mode（lane / 解析度 / 幀率 / 曝光範圍）。</li>
+<li>- [ ] 完成一次「改 DTB → 重編 → 刷入 → 列舉 → 取幀」並記錄。</li>
+<li>- [ ] 能解釋「probe 成功但沒出圖」最常見的三個原因。</li>
+<li>- [ ] 能用 media-ctl 驗證管線拓撲。</li>
+<li>- [ ] 能寫出「dmesg 沒 error 不代表生效」的驗證三件套。</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-03.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 3 · 感測器通訊介面</div></a>
     <a class="np-next" href="unit-05.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 5 · 第一個鏡頭跑起來</div></a>

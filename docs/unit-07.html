@@ -168,6 +168,57 @@ pipeline1 = argus.createPipeline(session, sensor=1, outputFormat='NV12')
 <li>若你需要用 NVDEC 解碼 H.264 影片後做 AI 推論，畫出完整的資料流：NVDEC → ISP → NVINF，標出每步的格式轉換。</li>
 </ol>
 
+  <h2>7.13 專案級端到端 Worked Example：ISP 分級診斷專案</h2>
+<p>場景：影像品質問題常常「人人有看法、沒人有證據」。專案目標：建立一套<strong>ISP 分級診斷系統</strong>，任何「畫面怪」都能用固定流程歸因到「感測器 / 黑位 / LSC / 色彩 / NR / 美化」某一級，並輸出診斷報告。</p>
+<div class="demo-block"><div class="demo-label">診斷流程</div><pre><span class="hl-c"># Step 1 · 取 RAW 排除感測器 / 格式問題（回顧單元 8）</span>
+argus_camera --mode 0 --raw-file diag.raw --duration 1
+python3 - <<'EOF'
+import numpy as np
+raw = np.fromfile('diag.raw', dtype=np.uint16).reshape(800, 1280)
+print('黑位', raw.min(), '峰值', raw.max(), '均值', round(raw.mean(),1))
+<span class="hl-c"># 黑位異常 → 感測器 / 黑位級；峰值爆 → 曝光級；全花 → 格式級</span>
+EOF
+<span class="hl-c"># Step 2 · 依症狀向上分級（回顧 7.12 反向表）</span>
+<span class="hl-c">#   角落暗 → LSC（單元 12）</span>
+<span class="hl-c">#   色偏   → AWB / CCM（單元 11）</span>
+<span class="hl-c">#   顆粒   → NR / 增益（單元 13）</span>
+<span class="hl-c">#   不銳利 → Sharpen（單元 14）</span>
+<span class="hl-c"># Step 3 · 每級用標準樣本驗證（灰卡 / 色卡 / 解析度板）</span>
+<span class="hl-c"># Step 4 · 輸出診斷報告：症狀 → 證據 → 歸因 → 建議</span></pre></div>
+<p><strong>專案輸出：</strong>診斷 SOP 文件 + 標準樣本集（灰卡 / 色卡 / 解析度板 / 黑框）+ 診斷腳本。團隊從此不再「憑感覺修影像」。</p>
+
+<h2>7.14 量測/驗證 SOP：ISP 健康度驗證</h2>
+<ol>
+<li><strong>RAW 基線</strong>：取 RAW 檢查黑位、峰值、均值（排除感測器 / 格式問題）。</li>
+<li><strong>黑位級</strong>：全遮鏡頭，黑位應接近 datasheet 標稱。</li>
+<li><strong>LSC 級</strong>：拍均勻灰卡，中央 vs 角落比應接近 1（單元 12）。</li>
+<li><strong>色彩級</strong>：拍色卡，ΔE 應在目標內（單元 11）。</li>
+<li><strong>NR 級</strong>：灰卡 RAW 量 σ，確認在預算內（單元 13）。</li>
+<li><strong>美化級</strong>：解析度板確認無過度光暈（單元 14）。</li>
+</ol>
+<div class="callout"><strong>驗收指標：</strong>每級都有「量化數值 + 標準樣本」佐證，任何改動可回歸比較。</div>
+
+<h2>7.15 平台間對照：ISP 管線</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>ISP 提供者</td><td>NVIDIA ISP（libnvivp）</td><td>libcamera（開源）</td><td>感測器內建</td><td>Blackwell ISP</td></tr>
+<tr><td>管線深度</td><td>完整（BLC→LSC→demosaic→NR→CCM→gamma）</td><td>完整</td><td>陽春</td><td>完整 + AI 加速</td></tr>
+<tr><td>統計回饋</td><td>AE/AWB 自動閉迴路</td><td>可讀可改</td><td>有限</td><td>自動 + Holoscan</td></tr>
+<tr><td>參數可視性</td><td>低（封閉）</td><td>高（tuning file）</td><td>中</td><td>低</td></tr>
+<tr><td>診斷方法</td><td>看結果 + 統計行為</td><td>看數值</td><td>看結果</td><td>看結果 + 統計</td></tr>
+</table>
+<div class="callout"><strong>重點：</strong>「分級診斷」的框架四平台通用——先 RAW 排除底層，再依症狀往上歸因；差別只在「哪幾級你碰得到」。RPi5 全碰得到，Orin / Thor 只碰得到感測器 / 管線 / 驗證三側（回顧 9.9）。</div>
+
+<h2>7.16 互動式檢核清單：ISP 驗收</h2>
+<ul>
+<li>- [ ] 能畫出 NVIDIA ISP 管線並標出哪幾級是「自動」。</li>
+<li>- [ ] 能用「RAW → 黑位 → LSC → 色彩 → NR → 美化」依序歸因一個壞畫面。</li>
+<li>- [ ] 能說出 AE/AWB 統計閉迴路如何運作。</li>
+<li>- [ ] 能解釋「拿 NV12 判斷 ISP 品質」為什麼是陷阱。</li>
+<li>- [ ] 完成一次「壞畫面診斷」並輸出報告。</li>
+<li>- [ ] 能比較四平台 ISP 的可視性與自動化差異。</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-06.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 6 · Sensor Bring-up 與除錯</div></a>
     <a class="np-next" href="unit-08.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 8 · RAW 擷取與資料格式</div></a>

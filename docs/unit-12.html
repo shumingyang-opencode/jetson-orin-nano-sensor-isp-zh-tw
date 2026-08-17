@@ -193,6 +193,67 @@ argus_camera --mode 0 --lsc-file lsc_table.bin --duration 5</pre></div>
 <li>設計一個自動化 LSC 校正流程：腳本自動拍白牆、自動分析、自動生成校正表、自動載入 ISP。</li>
 </ol>
 
+  <h2>12.13 專案級端到端 Worked Example：LSC 校正產線化專案</h2>
+<p>場景：量產時每台設備的「鏡頭 + 感測器」組合都有個體差異，需要逐台做 LSC。專案目標：把單元 12 的 LSC 校正流程<strong>自動化</strong>：一鍵「拍白牆 → 分析 → 生成校正表 → 驗證」，產出每台設備專屬的 LSC 檔。</p>
+<div class="demo-block"><div class="demo-label">lsc_auto.sh（自動化骨架）</div><pre>#!/bin/bash
+set -e
+echo "== [1/4] 拍白牆 =="
+argus_camera --mode 0 --raw-file white.raw --duration 1
+echo "== [2/4] 分析並生成校正表 =="
+python3 - <<'EOF'
+import numpy as np
+raw = np.fromfile('white.raw', dtype=np.uint16).reshape(800, 1280)
+gx, gy = 32, 32                       # 33x33 grid
+h, w = raw.shape
+grid = np.zeros((gx, gy))
+for i in range(gx):
+    for j in range(gy):
+        ys = slice(i*h//gx, (i+1)*h//gx)
+        xs = slice(j*w//gy, (j+1)*w//gy)
+        grid[i, j] = raw[ys, xs].mean()
+center = grid[gx//2, gy//2]
+lsc = center / np.maximum(grid, 1e-6)   # 增益表：角落 > 1
+np.save('lsc_table.npy', lsc)
+print('生成 33x33 增益表，範圍', round(lsc.min(),2), '-', round(lsc.max(),2))
+EOF
+echo "== [3/4] 驗證：套用後重拍，角落比應接近 1 =="
+<span class="hl-c"># （載入 LSC 後重拍白牆，四角/中央比 < 1.05）</span>
+echo "== [4/4] 存檔 =="
+mv lsc_table.npy lsc_$(date +%Y%m%d_%H%M%S).npy</pre></div>
+<p><strong>專案輸出：</strong>自動化腳本 + 每台設備的 LSC 檔 + 驗證報告。產線 QA 只要跑一鍵流程。</p>
+
+<h2>12.14 量測/驗證 SOP：LSC 驗證</h2>
+<ol>
+<li><strong>拍攝條件</strong>：白牆 / 積分球、光線均勻、正對、無反光。</li>
+<li><strong>量測</strong>：拍均勻灰 RAW，量中央 vs 四角比。</li>
+<li><strong>分通道</strong>：R / Gr / Gb / B 各自量，確認無分通道偏色。</li>
+<li><strong>生成</strong>：依組合（鏡頭 + 感測器）生成校正表。</li>
+<li><strong>驗證</strong>：套用後重拍，四角 / 中央比應 &lt; 1.05。</li>
+<li><strong>回歸時機</strong>：換鏡頭、換感測器板、換 mode 都要重校。</li>
+</ol>
+<div class="callout"><strong>驗收指標：</strong>套用後角落 / 中央比 &lt; 1.05、四角無殘留偏色、Gr / Gb 差 &lt; 2%。</div>
+
+<h2>12.15 平台間對照：LSC</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>LSC 支援</td><td>✅ ISP 內建網格</td><td>✅ libcamera tuning</td><td>⚠️ 依感測器</td><td>✅ ISP 內建</td></tr>
+<tr><td>校正表格式</td><td>NVIDIA 工具格式</td><td>tuning file（JSON）</td><td>感測器 / 驅動</td><td>NVIDIA 格式</td></tr>
+<tr><td>生成工具</td><td>NVIDIA tuning tool</td><td>開源工具 / 自寫</td><td>自寫</td><td>NVIDIA tuning tool</td></tr>
+<tr><td>網格密度</td><td>依工具（17-65）</td><td>可自訂</td><td>有限</td><td>依工具</td></tr>
+<tr><td>校正方法</td><td colspan="4">白牆 / 積分球 + 分通道增益，全平台相同</td></tr>
+</table>
+<div class="callout"><strong>重點：</strong>「組合特有 + 分通道 + 重校時機」是平台無關的鐵律；差異只在校正表的格式與生成工具。</div>
+
+<h2>12.16 互動式檢核清單：LSC 驗收</h2>
+<ul>
+<li>- [ ] 能說明 cos⁴ 定律與角落偏色的關係。</li>
+<li>- [ ] 完成一次「白牆 → 量測 → 生成 → 驗證」並記錄。</li>
+<li>- [ ] 能說出換鏡頭 / 換感測器板 / 換 mode 都要重校的原因。</li>
+<li>- [ ] 能檢查 Gr / Gb 是否需分開校正。</li>
+<li>- [ ] 能說明「光源不均」如何污染 LSC 校正。</li>
+<li>- [ ] 能操作 lsc_auto.sh 並解讀增益表範圍。</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-11.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 11 · 白平衡與色彩（AWB/CCM）</div></a>
     <a class="np-next" href="unit-13.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 13 · 雜訊與降噪</div></a>

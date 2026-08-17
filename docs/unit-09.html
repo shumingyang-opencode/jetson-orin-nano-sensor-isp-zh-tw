@@ -179,6 +179,60 @@ EOF</pre></div>
 <li>比較 Orin Nano 的 Argus API 與 RPi5 的 libcamera API 在「同一功能」上的呼叫差異（例如：設定曝光時間、取得 RAW）。</li>
 </ol>
 
+  <h2>9.13 專案級端到端 Worked Example：跨平台遷移專案（RPi5 → Orin Nano）</h2>
+<p>場景：概念驗證在 RPi5 上完成，現在要遷移到 Orin Nano 做工業量產。專案目標：把「同一顆 OV9281」的整個影像系統搬過去，用<strong>功能對應法</strong>（回顧 15.11）逐層遷移，並建立兩平台的對照基線。</p>
+<div class="demo-block"><div class="demo-label">遷移里程碑</div><pre><span class="hl-c"># M1 · 感測器層：register 知識直接沿用，重寫為 tegracam init table</span>
+<span class="hl-c">#   RPi5: libcamera tuning + kernel patch</span>
+<span class="hl-c">#   Orin: DTB mode + tegracam 驅動（回顧單元 4）</span>
+<span class="hl-c"># M2 · 介面層：</span>
+<span class="hl-c">#   RPi5: ExposureTime / ColourGains / rpicam --raw</span>
+<span class="hl-c">#   Orin: SensorMode exp_time / Argus AWB / argus --raw-file</span>
+<span class="hl-c"># M3 · 出圖驗證：兩平台各自跑「列舉 → 出圖 → RAW」</span>
+<span class="hl-c">#   RPi5: libcamera-still --raw --nopreview -o rpi.raw</span>
+argus_camera --mode 0 --raw-file orin.raw --duration 1
+<span class="hl-c"># M4 · 品質基線：兩邊 RAW 跑同一套 rawstat 比較（回顧 9.9 方法）</span>
+python3 - <<'EOF'
+import numpy as np
+a = np.fromfile('rpi.raw',  dtype=np.uint16).reshape(800,1280)
+b = np.fromfile('orin.raw', dtype=np.uint16).reshape(800,1280)
+print('RPi5  mean', round(a.mean(),1), 'Orin mean', round(b.mean(),1))
+<span class="hl-c"># 差異大 → 先查驅動 init table 的 analog gain / exposure，再談 ISP</span>
+EOF
+<span class="hl-c"># M5 · 調校：黑位 → LSC → AWB/CCM 依 Orin 流程重做（參數不搬，流程搬）</span></pre></div>
+<p><strong>專案驗收：</strong>兩平台 RAW 品質指標可比、出圖流程文件化、「功能對應表」成為團隊資產。</p>
+
+<h2>9.14 量測/驗證 SOP：平台能力標竿驗證</h2>
+<ol>
+<li><strong>出圖基線</strong>：各平台跑「列舉 → 出圖」三件套。</li>
+<li><strong>RAW 基線</strong>：各平台取同一顆感測器的 RAW，跑同一套 rawstat。</li>
+<li><strong>延遲基線</strong>：量「取幀 → 顯示」端到端延遲（單元 5.13 方法）。</li>
+<li><strong>能力盤點</strong>：逐項核對 LSC / AWB / NR / HDR / GMSL 支援（單元 15 表格）。</li>
+<li><strong>頻寬 / 資源</strong>：記錄每平台最高可用模式的頻寬餘裕。</li>
+<li><strong>工具鏈</strong>：確認調校工具（tuning tool / tuning file）可用性。</li>
+</ol>
+<div class="callout"><strong>驗收指標：</strong>每平台一份「能力基線文件」，跨平台比較有共同量尺。</div>
+
+<h2>9.15 平台間對照：ISP 架構（本單元主軸）</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>ISP 來源</td><td>NVIDIA ISP</td><td>libcamera 開源</td><td>感測器內建</td><td>Blackwell ISP</td></tr>
+<tr><td>調校可視性</td><td>低（自動化）</td><td>高（tuning file）</td><td>中</td><td>低</td></tr>
+<tr><td>自動化程度</td><td>強（AE/AWB 閉迴路）</td><td>中（演算法可改）</td><td>弱</td><td>強 + Holoscan</td></tr>
+<tr><td>可調區塊</td><td>感測器 / 管線 / 驗證</td><td>全區塊</td><td>有限</td><td>感測器 / 管線 / 驗證</td></tr>
+<tr><td>遷移成本</td><td>流程可搬、參數重做</td><td>—</td><td>—</td><td>與 Orin 相近</td></tr>
+</table>
+<div class="callout"><strong>結論：</strong>四平台「原理 100% 共通、介面不同」——選平台看需求，遷移時「搬流程、不搬參數」。</div>
+
+<h2>9.16 互動式檢核清單：跨平台驗收</h2>
+<ul>
+<li>- [ ] 能畫出四平台的 ISP 分工並標出各自的可視性。</li>
+<li>- [ ] 能說出「封閉 ≠ 不可調」的三個可調區塊。</li>
+<li>- [ ] 完成一次「同一顆感測器、兩平台 RAW」的比較。</li>
+<li>- [ ] 能寫出 RPi5 → Orin 的功能對應表。</li>
+<li>- [ ] 能說明「搬流程、不搬參數」的遷移原則。</li>
+<li>- [ ] 能用決策流程選出適合你專案的平台。</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-08.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 8 · RAW 擷取與資料格式</div></a>
     <a class="np-next" href="unit-10.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 10 · 曝光與自動曝光（AE）</div></a>

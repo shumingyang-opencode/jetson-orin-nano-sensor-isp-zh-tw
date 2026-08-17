@@ -192,6 +192,61 @@ gst-launch-1.0 nvarguscamerasrc sensor-id=0 ! \
 <li>撰寫一個 argus_camera 的 wrapper script，自動偵測目前連接了幾顆感測器、支援哪些 mode，並讓使用者選一顆開拍。</li>
 </ol>
 
+  <h2>5.14 專案級端到端 Worked Example：自動化出圖驗證腳本專案</h2>
+<p>場景：生產線每台設備裝完都要人工跑 argus / v4l2 驗證出圖，太慢且容易漏。專案目標：寫一個<strong>自動化驗證腳本</strong>，一次跑完「Argus 出圖 → V4L2 取幀 → GStreamer 串流 → 幀大小 / 內容檢查」，輸出 pass/fail 報告。</p>
+<div class="demo-block"><div class="demo-label">capture_verify.sh</div><pre>#!/bin/bash
+set -e
+CAM=${1:-0}
+echo "== [1/4] Argus 出圖 =="
+argus_camera --mode 0 --capture-auto 1 --duration 1 || { echo "FAIL: argus"; exit 1; }
+echo "== [2/4] V4L2 取幀 =="
+v4l2-ctl -d /dev/video$CAM --stream-mmap=1 --stream-count=1 --stream-to=cap.raw
+SIZE=$(stat -f%z cap.raw)
+echo "檔案大小: $SIZE bytes"
+echo "== [3/4] GStreamer 串流 3 秒 =="
+timeout 3 gst-launch-1.0 v4l2src device=/dev/video$CAM ! fakesink || { echo "FAIL: gst"; exit 1; }
+echo "== [4/4] 內容檢查（全黑？）=="
+python3 - <<'EOF'
+import numpy as np
+raw = np.fromfile('cap.raw', dtype=np.uint8)
+print('mean', round(raw.mean(),1), 'max', int(raw.max()))
+assert raw.mean() > 5, "FAIL: 全黑"
+print("PASS")
+EOF</pre></div>
+<p><strong>專案輸出：</strong><code>capture_verify.sh</code>（單機驗證）+ 可接 CI 的 pass/fail 輸出。幀大小與內容檢查可以攔下「出圖成功但全黑」的隱形失敗。</p>
+
+<h2>5.15 量測/驗證 SOP：出圖驗證</h2>
+<ol>
+<li><strong>列舉</strong>：<code>v4l2-ctl --list-devices</code> → 確認 videoN 存在。</li>
+<li><strong>拓撲</strong>：<code>media-ctl -p</code> → 管線完整。</li>
+<li><strong>格式</strong>：<code>v4l2-ctl -d /dev/video0 --list-formats-ext</code> → 記錄 fourcc / 尺寸。</li>
+<li><strong>取幀</strong>：<code>--stream-mmap=1 --stream-count=1 --stream-to=f.raw</code> → 驗證幀大小公式。</li>
+<li><strong>內容</strong>：取 RAW 檢查 mean / max，排除「全黑」。</li>
+<li><strong>多工具交叉</strong>：Argus 出圖 + GStreamer 串流，確認三種工具都通。</li>
+</ol>
+<div class="callout"><strong>驗收指標：</strong>三種工具都出圖、幀大小正確、內容非全黑、非綠紫。</div>
+
+<h2>5.16 平台間對照：出圖工具</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>出圖指令</td><td>argus_camera</td><td>rpicam-still</td><td>v4l2-ctl</td><td>argus / Holoscan</td></tr>
+<tr><td>串流</td><td>gst nvarguscamerasrc</td><td>libcamera-vid</td><td>gst v4l2src</td><td>gst + Holoscan</td></tr>
+<tr><td>RAW</td><td>--raw-file</td><td>--raw</td><td>--stream-to</td><td>--raw-file</td></tr>
+<tr><td>預覽</td><td>--preview（EGL）</td><td>--viewfinder</td><td>gst autovideosink</td><td>EGL / Holoscan</td></tr>
+<tr><td>底層</td><td colspan="4">全部走 V4L2 / media API — 知識共通</td></tr>
+</table>
+<div class="callout"><strong>重點：</strong>「出圖 = 鏈路通」的驗證哲學四平台通用；指令不同但驗證三件套（列舉 / 取幀 / 內容）可平移。</div>
+
+<h2>5.17 互動式檢核清單：出圖驗收</h2>
+<ul>
+<li>- [ ] 能用 argus_camera 出圖並驗證檔案存在。</li>
+<li>- [ ] 能用 v4l2-ctl 取一幀並驗證幀大小公式。</li>
+<li>- [ ] 能用 GStreamer 串流並用 fakesink 測試吞吐。</li>
+<li>- [ ] 能判斷「全黑 / 綠紫 / 停住」各屬哪一層問題。</li>
+<li>- [ ] 能分辨 Argus 出圖失敗與 V4L2 出圖失敗的差異。</li>
+<li>- [ ] 完成一次自動化出圖驗證（capture_verify.sh）並得到 PASS。</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-04.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 4 · 平台相機框架與驅動</div></a>
     <a class="np-next" href="unit-06.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 6 · Sensor Bring-up 與除錯</div></a>

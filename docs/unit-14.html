@@ -225,6 +225,53 @@ argus_camera --mode 0 --raw-file colorchecker.raw --duration 1
 <li>若你需要將調校參數從「開發環境」複製到「量產板」，設計一個參數打包/部署流程。</li>
 </ol>
 
+  <h2>14.17 專案級端到端 Worked Example：量產級調校工作流專案</h2>
+<p>場景：OV9281 + 廣角鏡頭要從「能出圖」調到「量產級品質」（呼應 14.13 的 4 天流程）。專案目標：把這 4 天流程<strong>版本化、可重現、可回歸</strong>，成為團隊的調校 SOP 專案。</p>
+<div class="demo-block"><div class="demo-label">工作流專案（4 階段）</div><pre><span class="hl-c"># Day 1 · 基礎設定：黑位 + LSC（回顧單元 8 / 12）</span>
+argus_camera --mode 0 --raw-file black.raw --duration 1   <span class="hl-c"># 全遮 → BLC</span>
+argus_camera --mode 0 --raw-file white.raw --duration 1   <span class="hl-c"># 白牆 → LSC</span>
+<span class="hl-c"># Day 2 · 色彩：AWB + CCM（回顧單元 11）</span>
+argus_camera --mode 0 --raw-file cc.raw --duration 1      <span class="hl-c"># 色卡 → gains + CCM</span>
+<span class="hl-c"># Day 3 · 美化：NR + Sharpen（回顧單元 13 / 14）</span>
+<span class="hl-c">#    NR level 階梯 + 解析度板 sharpen 階梯</span>
+<span class="hl-c"># Day 4 · 回歸：多場景 + 量化指標</span>
+<span class="hl-c">#    室內 / 室外 / 低光 / 高對比，量 SNR / ΔE / MTF</span>
+<span class="hl-c"># 每次改動填 tuning log（回顧 14.7 範本）</span>
+<span class="hl-c"># 版本管理：每個參數檔用 git 管，附場景照</span></pre></div>
+<p><strong>專案輸出：</strong>版本化的參數檔 + 每階段的量化驗證 + 完整 tuning log。可重現 = 換板子 / 換人做也能得到相同結果。</p>
+
+<h2>14.18 量測/驗證 SOP：調校工作流驗證</h2>
+<ol>
+<li><strong>順序</strong>：黑位 → LSC → AWB/CCM → 曝光基準 → NR → Sharpen → 回歸。</li>
+<li><strong>每次一參數</strong>：一次只改一個參數，統一場景比較。</li>
+<li><strong>量化指標</strong>：SNR、ΔE、MTF、動態範圍（EV 差）。</li>
+<li><strong>回歸</strong>：室內 / 日光 / 逆光 / 低光全跑。</li>
+<li><strong>HDR 決策</strong>：量 EV 需求，≤ 3 EV 用 tone mapping，&gt; 3 EV 才考慮多幀 HDR。</li>
+<li><strong>記錄</strong>：tuning log（日期 / 場景 / 改動 / 原因 / 結果 / 回歸 / 附圖）。</li>
+</ol>
+<div class="callout"><strong>驗收指標：</strong>每階段有量化證據、回歸全過、log 完整可重現。</div>
+
+<h2>14.19 平台間對照：調校工作流</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>調校工具</td><td>NVIDIA ISP Tuning Tool</td><td>libcamera tuning file</td><td>手動 register</td><td>NVIDIA + Holoscan</td></tr>
+<tr><td>參數格式</td><td>.bin / GUI</td><td>JSON（可文字編輯）</td><td>register 表</td><td>.bin</td></tr>
+<tr><td>HDR</td><td>✅ 多幀 + tone</td><td>✅</td><td>⚠️</td><td>✅✅ + AI</td></tr>
+<tr><td>Sharpen</td><td>✅ 內建</td><td>✅</td><td>⚠️</td><td>✅</td></tr>
+<tr><td>工作流順序</td><td colspan="4">BLC → LSC → AWB/CCM → … → 回歸，全平台相同</td></tr>
+</table>
+<div class="callout"><strong>重點：</strong>調校「順序」是平台無關的；差異在工具與參數格式。真正可攜的資產是流程與量化方法，不是參數值。</div>
+
+<h2>14.20 互動式檢核清單：調校工作流驗收</h2>
+<ul>
+<li>- [ ] 能背出調校順序並說明「為什麼黑位要先」。</li>
+<li>- [ ] 完成一輪「校正 → 美化 → 回歸」並填 log。</li>
+<li>- [ ] 能用量化指標（SNR / ΔE / EV）判斷調校成效。</li>
+<li>- [ ] 能依場景 EV 需求決定 tone mapping 或 HDR。</li>
+<li>- [ ] 能找到 sharpen 的「光暈出現點」。</li>
+<li>- [ ] 能把調校參數與 log 版本化、可重現。</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-13.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 13 · 雜訊與降噪</div></a>
     <a class="np-next" href="unit-15.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 15 · 四平台影像調校功能比較</div></a>

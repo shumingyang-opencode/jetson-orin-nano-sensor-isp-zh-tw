@@ -195,6 +195,54 @@ argus_camera --mode 0 --ae-auto \
 <li>若你的場景有「週期性亮度變化」（例如旋轉物體的反光），設計一個 AE 策略使畫面亮度保持穩定（提示：考慮 AE 的 response time 與週期的關係）。</li>
 </ol>
 
+  <h2>10.13 專案級端到端 Worked Example：產線 AE 收斂最佳化專案</h2>
+<p>場景：傳送帶缺陷檢測（回顧 10.10 場景）產品每幾秒更換，AE 要不斷重收斂，且要同時避免 banding 與震盪。專案目標：系統化調出「收斂快、不震盪、無 banding」的 AE 參數組。</p>
+<div class="demo-block"><div class="demo-label">專案流程</div><pre><span class="hl-c"># Step 1 · 鎖定光源與曝光基準（排除 AE 干擾）</span>
+<span class="hl-c">#   量光源頻率（50Hz / 60Hz）→ 決定安全曝光（回顧 10.13）</span>
+<span class="hl-c"># Step 2 · 測曝光階梯 + SNR 預算 → 定 max_gain（回顧 13.6）</span>
+<span class="hl-c"># Step 3 · 設定 AE 範圍：min/max exp、max gain、target brightness</span>
+argus_camera --mode 0 --ae-auto \
+  --ae-target-brightness 128 \
+  --ae-convergence-speed medium \
+  --ae-min-exposure 1000 --ae-max-exposure 33000
+<span class="hl-c"># Step 4 · 收斂測試：LED 開/關計時收斂秒數（回顧 10.12-2）</span>
+<span class="hl-c"># Step 5 · 長跑回歸：不同產品連續跑 30 分鐘，檢查</span>
+<span class="hl-c">#   有無震盪（忽亮忽暗）、有無 banding、有無卡邊界</span>
+<span class="hl-c"># Step 6 · 把參數組寫進 DTB mode 或 runtime 設定，固化版本</span></pre></div>
+<p><strong>專案輸出：</strong>AE 參數表（含範圍 / 目標 / 收斂速度）+ 收斂測試數據 + 30 分鐘長跑報告。</p>
+
+<h2>10.14 量測/驗證 SOP：曝光 / AE 驗證</h2>
+<ol>
+<li><strong>讀現值</strong>：<code>v4l2-ctl -d /dev/v4l-subdev0 -C exposure</code> / <code>-C analogue_gain</code>。</li>
+<li><strong>曝光階梯</strong>：固定增益逐級拉曝光，驗證 RAW 亮度線性。</li>
+<li><strong>banding 檢查</strong>：室內日光燈下檢查橫紋；曝光設光源週期整數倍。</li>
+<li><strong>AE 收斂</strong>：明 / 暗切換，計時收斂幀數與是否震盪。</li>
+<li><strong>範圍邊界</strong>：確認 AE 在極暗 / 極亮場景是否卡 min / max。</li>
+<li><strong>順序紀律</strong>：光源 → 曝光 → 類比增益 → 數位增益。</li>
+</ol>
+<div class="callout"><strong>驗收指標：</strong>曝光線性 R² &gt; 0.98、收斂 &lt; 1s 且無震盪、無 banding、極端場景不卡死。</div>
+
+<h2>10.15 平台間對照：曝光控制</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>曝光介面</td><td>SensorMode exp_time</td><td>libcamera ExposureTime</td><td>V4L2 exposure</td><td>SensorMode</td></tr>
+<tr><td>增益介面</td><td>SensorMode gain</td><td>AnalogueGain</td><td>analogue_gain</td><td>SensorMode</td></tr>
+<tr><td>AE 演算法</td><td>NVIDIA 閉迴路（PID）</td><td>libcamera AGC 可改</td><td>感測器內建</td><td>NVIDIA 閉迴路</td></tr>
+<tr><td>收斂控制</td><td>convergence-speed</td><td>調 AGC 參數</td><td>有限</td><td>convergence-speed</td></tr>
+<tr><td>曝光單位</td><td colspan="4">微秒（µs）— 跨平台一致</td></tr>
+</table>
+<div class="callout"><strong>重點：</strong>「順序鐵則」與「banding 對齊」是平台無關的；差異只在 AE 演算法的可視性——RPi5 可改演算法，Orin / Thor 只能調參數與範圍。</div>
+
+<h2>10.16 互動式檢核清單：曝光 / AE 驗收</h2>
+<ul>
+<li>- [ ] 能背出曝光三要素的正確順序並說明理由。</li>
+<li>- [ ] 完成一次曝光階梯並判讀線性範圍。</li>
+<li>- [ ] 能在日光燈下檢查並解決 banding。</li>
+<li>- [ ] 能診斷「AE 卡上限 / 統計被騙 / 震盪」三種症狀。</li>
+<li>- [ ] 能設定並驗證一組 AE 範圍參數。</li>
+<li>- [ ] 能比較四平台的曝光控制介面。</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-09.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 9 · 各平台 ISP 架構差異</div></a>
     <a class="np-next" href="unit-11.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 11 · 白平衡與色彩（AWB/CCM）</div></a>

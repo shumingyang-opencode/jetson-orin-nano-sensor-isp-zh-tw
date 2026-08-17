@@ -211,6 +211,67 @@ EOF</pre></div>
 <li>若你的 RAW 是從多感測器同步擷取的，設計一個「時間戳對齊」腳本：從 V4L2 buffer 的 metadata 中提取每幀的時間戳，計算兩路之間的偏移量。</li>
 </ol>
 
+  <h2>8.23 專案級端到端 Worked Example：RAW 分析工具鏈專案</h2>
+<p>場景：每次要分析 RAW 都重新寫腳本，格式假設容易錯。專案目標：建立一套<strong>RAW 分析工具鏈</strong>：自動偵測格式（解析度 / 位元深 / packing / Bayer）、輸出黑位 / 雜訊 / 缺陷像素統計，作為團隊共用的品質分析工具。</p>
+<div class="demo-block"><div class="demo-label">rawstat.py（工具鏈核心）</div><pre>python3 - <<'EOF'
+import numpy as np, sys, glob, os
+
+def detect_resolution(path):
+    size = os.path.getsize(path)
+    cands = [(1280,800),(2592,1944),(3280,2464)]
+    for w,h in cands:
+        if size == w*h*2: return w,h        # 16-bit unpacked
+    raise ValueError('unknown size')
+
+def analyze(path):
+    w,h = detect_resolution(path)
+    raw = np.fromfile(path, dtype=np.uint16).reshape(h,w)
+    roi = raw[h//3:2*h//3, w//3:2*w//3]
+    return {
+        'size': f'{w}x{h}',
+        'black': int(raw.min()),
+        'sat_px': int((raw==1023).sum()),
+        'noise_sigma': round(float(roi.std()),2),
+        'mean': round(float(raw.mean()),1),
+    }
+
+for f in sorted(glob.glob('*.raw')):
+    print(f, analyze(f))
+EOF</pre></div>
+<p><strong>專案輸出：</strong><code>rawstat.py</code>（統計）+ <code>rawdetect.py</code>（格式自動偵測，呼應 8.22 挑戰 1）+ <code>diff.py</code>（兩幀 / 兩顆感測器比較）。工具鏈一次建立、全團隊共用。</p>
+
+<h2>8.24 量測/驗證 SOP：RAW 品質驗證</h2>
+<ol>
+<li><strong>解析前 5 確認</strong>：解析度、位元深、packing、Bayer order、黑位（回顧 8.15）。</li>
+<li><strong>檔案大小</strong>：確認 = width × height × bytes/pixel（無 stride 陷阱）。</li>
+<li><strong>黑位</strong>：全遮鏡頭量 min / mean，與 datasheet 標稱 ±10%。</li>
+<li><strong>飽和點</strong>：亮部峰值是否常達滿位（過曝風險）。</li>
+<li><strong>雜訊</strong>：平坦區 σ，記錄 σ vs gain 曲線。</li>
+<li><strong>缺陷像素</strong>：黑框下統計固定亮點，需要時進 DPC（單元 13）。</li>
+</ol>
+<div class="callout"><strong>紀律：</strong>分析前鎖定 mode（解析度 / 格式），跨幀比較才公平（回顧 8.8）。</div>
+
+<h2>8.25 平台間對照：RAW 取樣</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>取 RAW 指令</td><td>argus --raw-file</td><td>rpicam --raw</td><td>v4l2-ctl --stream-to</td><td>argus / Holoscan</td></tr>
+<tr><td>RAW 格式</td><td colspan="4">同感測器輸出相同（SRGGB10…）</td></tr>
+<tr><td>Packing 差異</td><td colspan="4">依感測器 / 驅動，與平台無關</td></tr>
+<tr><td>分析工具</td><td colspan="4">Python / numpy / rawpy 全平台共用</td></tr>
+<tr><td>取樣品質</td><td>可能受驅動 init table 影響（回顧 9.10）</td><td>同左</td><td>同左</td><td>同左</td></tr>
+</table>
+<div class="callout"><strong>重點：</strong>RAW 是「平台無關」的共通語言——分析腳本與判讀標準可直接跨平台搬；差異只在「取 RAW 的指令」與「驅動 init table 造成的底色差」。</div>
+
+<h2>8.26 互動式檢核清單：RAW 驗收</h2>
+<ul>
+<li>- [ ] 能解析一幀 RAW 並確認 5 個格式參數。</li>
+<li>- [ ] 完成「全遮黑位 + 平坦區 σ」量測並記錄。</li>
+<li>- [ ] 能用雷射亮點法判定 Bayer order。</li>
+<li>- [ ] 能解釋 stride 與 cache 對 RAW 分析的影響。</li>
+<li>- [ ] 能判斷「條紋 / 色彩全亂 / 階調斷裂」各是哪個格式參數錯。</li>
+<li>- [ ] 能操作 rawstat.py 並解讀輸出。</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-07.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 7 · ISP 管線深入</div></a>
     <a class="np-next" href="unit-09.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 9 · 各平台 ISP 架構差異</div></a>

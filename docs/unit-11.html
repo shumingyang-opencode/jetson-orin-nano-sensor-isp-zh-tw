@@ -188,6 +188,55 @@ argus_camera --mode 0 --awb-manual --color-temperature 4500
 <li>若你的 CCM 計算工具回傳的 CCM 行加總不等於 1，解釋為什麼這會導致色彩偏移，並寫出修正公式。</li>
 </ol>
 
+  <h2>11.13 專案級端到端 Worked Example：色彩校準專案</h2>
+<p>場景：產品要出貨，客戶要求色彩一致（ΔE &lt; 5）。專案目標：完成「灰卡 AWB + 色卡 CCM」的完整色彩校準，並在多種光源下回歸。</p>
+<div class="demo-block"><div class="demo-label">校準專案流程</div><pre><span class="hl-c"># Phase 1 · 感測器中性化（先決條件）</span>
+<span class="hl-c">#   確認感測器端 AWB 關閉、黑位正確（回顧單元 8）</span>
+<span class="hl-c"># Phase 2 · 灰卡 AWB（每種光源各一次）</span>
+argus_camera --mode 0 --raw-file gray_5500k.raw --duration 1
+<span class="hl-c">#   讀灰卡區 R/G/B，算 gains 讓 R≈G≈B（回顧 11.9）</span>
+<span class="hl-c">#   結果建表：5500K → R_gain / B_gain</span>
+<span class="hl-c"># Phase 3 · 色卡 CCM（每種光源各一次）</span>
+argus_camera --mode 0 --raw-file cc_5500k.raw --duration 1
+<span class="hl-c">#   量 24 色塊 vs 標準值，最小二乘求 3×3 CCM（回顧 11.10）</span>
+<span class="hl-c"># Phase 4 · 驗證</span>
+<span class="hl-c">#   重新拍灰卡 / 色卡，確認 R≈G≈B 且 ΔE < 5</span>
+<span class="hl-c"># Phase 5 · 回歸</span>
+<span class="hl-c">#   3200K / 5500K / 日光燈 三種光源全跑，記錄各光源的 gains + CCM</span></pre></div>
+<p><strong>專案輸出：</strong>光源 →（AWB gains, CCM）對照表 + 每光源 ΔE 報告。這就是量產 firmware 要載入的色彩檔。</p>
+
+<h2>11.14 量測/驗證 SOP：色彩驗證</h2>
+<ol>
+<li><strong>前置</strong>：感測器端 AWB 關閉、感測器維持中性。</li>
+<li><strong>灰卡校正</strong>：灰卡佔畫面 ≥ 30%、光均勻、無反光；校正後 R/G、B/G 接近 1.0。</li>
+<li><strong>色卡驗證</strong>：拍標準色卡，量各色塊 ΔE。</li>
+<li><strong>光源回歸</strong>：每種目標光源獨立校正與驗證。</li>
+<li><strong>混合光源</strong>：窗邊 + 燈泡場景，考慮鎖定手動色溫。</li>
+<li><strong>陷阱檢查</strong>：確認感測器與平台端沒有「兩端同時開 AWB」。</li>
+</ol>
+<div class="callout"><strong>驗收指標：</strong>灰卡 R≈G≈B、色卡 ΔE &lt; 5（同光源）、光源間無跳色。</div>
+
+<h2>11.15 平台間對照：AWB / CCM</h2>
+<table>
+<tr><th>面向</th><th>Orin Nano</th><th>RPi5</th><th>Orange Pi</th><th>Thor</th></tr>
+<tr><td>AWB 介面</td><td>Argus AWB（auto/manual）</td><td>ColourGains</td><td>red / blue_balance</td><td>Argus AWB</td></tr>
+<tr><td>CCM 載入</td><td>NVIDIA tuning</td><td>tuning file</td><td>感測器內建</td><td>NVIDIA tuning</td></tr>
+<tr><td>手動色溫</td><td>✅ 可鎖定</td><td>✅ 可設定</td><td>⚠️ 有限</td><td>✅ 可鎖定</td></tr>
+<tr><td>演算法可視性</td><td>低（黑箱）</td><td>高（可改）</td><td>低</td><td>低</td></tr>
+<tr><td>校正工具</td><td colspan="4">灰卡 / 色卡 + 自寫腳本全平台通用</td></tr>
+</table>
+<div class="callout"><strong>重點：</strong>色彩校正的「方法」全平台相同（灰卡 → AWB、色卡 → CCM）；差異在「參數從哪個介面載入」——Orin / Thor 走 NVIDIA tuning，RPi5 走 tuning file。</div>
+
+<h2>11.16 互動式檢核清單：色彩驗收</h2>
+<ul>
+<li>- [ ] 能說出 AWB 估光源、CCM 修色域的分工。</li>
+<li>- [ ] 完成一組灰卡校正並記錄 gains。</li>
+<li>- [ ] 能在兩種色溫下各做一次校正並比較。</li>
+<li>- [ ] 能解釋「感測器端 + 平台端同時開 AWB」為什麼打架。</li>
+<li>- [ ] 能用色卡量 ΔE 並判斷是否需動 CCM。</li>
+<li>- [ ] 能寫出你的「光源 → gains / CCM」對照表。</li>
+</ul>
+
   <div class="next-prev">
     <a href="unit-10.html"><div class="np-label">← 上一篇</div><div class="np-name">單元 10 · 曝光與自動曝光（AE）</div></a>
     <a class="np-next" href="unit-12.html"><div class="np-label">下一篇 →</div><div class="np-name">單元 12 · 鏡頭陰影校正（LSC）</div></a>
